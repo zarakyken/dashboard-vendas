@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import locale
+
 
 # =====================================================
 # CONFIGURAÇÃO INICIAL
 # =====================================================
 st.set_page_config(page_title="Dashboard de Vendas", layout="wide")
-locale.setlocale(locale.LC_TIME, "pt_BR.UTF-8")
+
 
 # =====================================================
 # CONSTANTES
@@ -196,4 +196,5 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     )
 
     calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
+
     st.dataframe(calendario, use_container_width=True)
