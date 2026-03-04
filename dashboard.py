@@ -98,37 +98,35 @@ if tipo_dashboard == "Dashboard Mensal":
     k2.metric("🚚 Frete Total", formato_real(total_frete))
     k3.metric("🎯 Meta Mensal", formato_real(META_MENSAL))
 
-    # -------- VENDAS POR VENDEDOR --------
-    st.subheader("👤 Vendas por Vendedor")
+    # -------- VENDAS POR VENDEDOR + META --------
+    st.subheader("👤 Vendas por Vendedor x Meta")
 
-    vendas_vendedor = (
-        df.groupby("vendedor")["valor_total"]
-        .sum()
-        .reset_index()
-        .sort_values("valor_total", ascending=False)
+    # Total de vendedores
+    qtd_vendedores = vendas_vendedor["vendedor"].nunique()
+    meta_individual = META_MENSAL / qtd_vendedores if qtd_vendedores > 0 else 0
+
+    # Ordenar do maior para o menor
+    vendas_vendedor = vendas_vendedor.sort_values(
+        "valor_total", ascending=False
     )
 
-    vendas_vendedor = vendas_vendedor.merge(
-        frete_por_vendedor, on="vendedor", how="left"
-    ).fillna(0)
+    # Criar colunas de meta e status
+    vendas_vendedor["Meta Individual"] = meta_individual
+    vendas_vendedor["Status Meta"] = vendas_vendedor["valor_total"].apply(
+        lambda x: "🟢 Atingiu a Meta" if x >= meta_individual else "🔴 Não Atingiu"
+    )
 
-    vendas_vendedor["% Frete / Vendas"] = (
-        vendas_vendedor["receita_frete"] / vendas_vendedor["valor_total"] * 100
-    ).fillna(0)
-
+    # Formatação
     vendas_vendedor["Vendas"] = vendas_vendedor["valor_total"].apply(formato_real)
-    vendas_vendedor["Frete Cobrado"] = vendas_vendedor["receita_frete"].apply(formato_real)
-    vendas_vendedor["% Frete / Vendas"] = vendas_vendedor["% Frete / Vendas"].apply(
-        lambda x: f"{x:.2f}%"
-    )
+    vendas_vendedor["Meta Individual"] = vendas_vendedor["Meta Individual"].apply(formato_real)
 
+    # Exibição
     st.dataframe(
         vendas_vendedor[
-            ["vendedor", "Vendas", "Frete Cobrado", "% Frete / Vendas"]
+            ["vendedor", "Vendas", "Meta Individual", "Status Meta"]
         ],
         use_container_width=True
     )
-
     # -------- VENDAS DIÁRIAS (SELEÇÃO POR DATA) --------
     st.subheader("📅 Vendas do Dia")
 
@@ -221,6 +219,7 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
 
     st.dataframe(calendario, use_container_width=True)
+
 
 
 
