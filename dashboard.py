@@ -46,7 +46,11 @@ def preparar_base(df):
     df["data"] = pd.to_datetime(df["data"]).dt.date
     df["quantidade"] = df["quantidade"].astype(float)
     df["valor_unitario"] = df["valor_unitario"].astype(float)
-    df["valor_total"] = df["quantidade"] * df["valor_unitario"]
+    df["valor_total"] = (
+        df["quantidade"].abs() * df["valor_unitario"].abs()
+)
+
+    df.loc[df["quantidade"] < 0, "valor_total"] *= -1
 
     return df
 
@@ -198,3 +202,4 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
 
     st.dataframe(calendario, use_container_width=True)
+
