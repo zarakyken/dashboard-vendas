@@ -98,40 +98,70 @@ if tipo_dashboard == "Dashboard Mensal":
     k2.metric("🚚 Frete Total", formato_real(total_frete))
     k3.metric("🎯 Meta Mensal", formato_real(META_MENSAL))
 
-   # -------- VENDAS POR VENDEDOR + META --------
-    st.subheader("👤 Vendas por Vendedor x Meta")
+   # -------- VENDAS + FRETE + META POR VENDEDOR --------
+    st.subheader("👤 Vendas, Frete e Meta por Vendedor")
 
-    # 1️⃣ Agrupar vendas por vendedor
+    # Agrupa vendas
     vendas_vendedor = (
         df.groupby("vendedor")["valor_total"]
         .sum()
         .reset_index()
     )
 
-    # 2️⃣ Ordenar do maior para o menor
+    # Agrupa frete
+    frete_por_vendedor = (
+        df_frete.groupby("vendedor")["receita_frete"]
+        .sum()
+        .reset_index()
+    )
+
+    # Junta vendas + frete
+    vendas_vendedor = vendas_vendedor.merge(
+        frete_por_vendedor,
+        on="vendedor",
+        how="left"
+    ).fillna(0)
+
+    # Ordena do maior para o menor
     vendas_vendedor = vendas_vendedor.sort_values(
         "valor_total", ascending=False
     )
 
-    # 3️⃣ Calcular meta individual
+    # Calcula meta individual
     qtd_vendedores = vendas_vendedor["vendedor"].nunique()
     meta_individual = META_MENSAL / qtd_vendedores if qtd_vendedores > 0 else 0
 
     vendas_vendedor["Meta Individual"] = meta_individual
 
-    # 4️⃣ Status da meta
+    # Status da meta
     vendas_vendedor["Status Meta"] = vendas_vendedor["valor_total"].apply(
         lambda x: "🟢 Atingiu a Meta" if x >= meta_individual else "🔴 Não Atingiu"
     )
 
-    # 5️⃣ Formatação
-    vendas_vendedor["Vendas"] = vendas_vendedor["valor_total"].apply(formato_real)
-    vendas_vendedor["Meta Individual"] = vendas_vendedor["Meta Individual"].apply(formato_real)
+    # % Frete sobre vendas
+    vendas_vendedor["% Frete / Vendas"] = (
+        vendas_vendedor["receita_frete"] / vendas_vendedor["valor_total"] * 100
+    ).fillna(0)
 
-    # 6️⃣ Exibição final
+    # Formatação
+    vendas_vendedor["Vendas"] = vendas_vendedor["valor_total"].apply(formato_real)
+    vendas_vendedor["Frete Cobrado"] = vendas_vendedor["receita_frete"].apply(formato_real)
+    vendas_vendedor["Meta Individual"] = vendas_vendedor["Meta Individual"].apply(formato_real)
+    vendas_vendedor["% Frete / Vendas"] = vendas_vendedor["% Frete / Vendas"].apply(
+        lambda x: f"{x:.2f}%"
+    )
+
+    # Exibição final
     st.dataframe(
         vendas_vendedor[
-            ["vendedor", "Vendas", "Meta Individual", "Status Meta"]
+            [
+                "vendedor",
+                "Vendas",
+                "Frete Cobrado",
+                "% Frete / Vendas",
+                "Meta Individual",
+                "Status Meta"
+            ]
         ],
         use_container_width=True
     )
@@ -227,6 +257,7 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
 
     st.dataframe(calendario, use_container_width=True)
+
 
 
 
