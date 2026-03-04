@@ -105,6 +105,7 @@ if tipo_dashboard == "Dashboard Mensal":
         df.groupby("vendedor")["valor_total"]
         .sum()
         .reset_index()
+        .sort_values("valor_total", ascending=False)
     )
 
     vendas_vendedor = vendas_vendedor.merge(
@@ -211,5 +212,6 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
 
     st.dataframe(calendario, use_container_width=True)
+
 
 
