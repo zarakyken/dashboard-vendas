@@ -131,9 +131,18 @@ if tipo_dashboard == "Dashboard Mensal":
     # -------- VENDAS DIÁRIAS (SELEÇÃO POR DATA) --------
     st.subheader("📅 Vendas do Dia")
 
+    datas_disponiveis = sorted(df["data"].unique())
+    hoje = datetime.today().date()
+
+    if hoje in datas_disponiveis:
+        indice_padrao = datas_disponiveis.index(hoje)
+    else:
+        indice_padrao = len(datas_disponiveis) - 1
+
     dia_sel = st.selectbox(
         "Selecione a data",
-        sorted(df["data"].unique())
+        datas_disponiveis,
+        index=indice_padrao
     )
 
     df_dia = df[df["data"] == dia_sel]
@@ -202,4 +211,5 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
 
     st.dataframe(calendario, use_container_width=True)
+
 
