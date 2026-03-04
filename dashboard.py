@@ -98,29 +98,37 @@ if tipo_dashboard == "Dashboard Mensal":
     k2.metric("🚚 Frete Total", formato_real(total_frete))
     k3.metric("🎯 Meta Mensal", formato_real(META_MENSAL))
 
-    # -------- VENDAS POR VENDEDOR + META --------
+   # -------- VENDAS POR VENDEDOR + META --------
     st.subheader("👤 Vendas por Vendedor x Meta")
 
-    # Total de vendedores
-    qtd_vendedores = vendas_vendedor["vendedor"].nunique()
-    meta_individual = META_MENSAL / qtd_vendedores if qtd_vendedores > 0 else 0
+    # 1️⃣ Agrupar vendas por vendedor
+    vendas_vendedor = (
+        df.groupby("vendedor")["valor_total"]
+        .sum()
+        .reset_index()
+    )
 
-    # Ordenar do maior para o menor
+    # 2️⃣ Ordenar do maior para o menor
     vendas_vendedor = vendas_vendedor.sort_values(
         "valor_total", ascending=False
     )
 
-    # Criar colunas de meta e status
+    # 3️⃣ Calcular meta individual
+    qtd_vendedores = vendas_vendedor["vendedor"].nunique()
+    meta_individual = META_MENSAL / qtd_vendedores if qtd_vendedores > 0 else 0
+
     vendas_vendedor["Meta Individual"] = meta_individual
+
+    # 4️⃣ Status da meta
     vendas_vendedor["Status Meta"] = vendas_vendedor["valor_total"].apply(
         lambda x: "🟢 Atingiu a Meta" if x >= meta_individual else "🔴 Não Atingiu"
     )
 
-    # Formatação
+    # 5️⃣ Formatação
     vendas_vendedor["Vendas"] = vendas_vendedor["valor_total"].apply(formato_real)
     vendas_vendedor["Meta Individual"] = vendas_vendedor["Meta Individual"].apply(formato_real)
 
-    # Exibição
+    # 6️⃣ Exibição final
     st.dataframe(
         vendas_vendedor[
             ["vendedor", "Vendas", "Meta Individual", "Status Meta"]
@@ -219,6 +227,7 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
 
     st.dataframe(calendario, use_container_width=True)
+
 
 
 
