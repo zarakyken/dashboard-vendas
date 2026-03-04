@@ -185,9 +185,18 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     # --------------------------
     total_geral_orcamentos = df_orc["valor_orcado"].sum()
 
+    datas_disponiveis = sorted(df_orc["data"].unique())
+    hoje = datetime.today().date()
+
+    if hoje in datas_disponiveis:
+        indice_padrao = datas_disponiveis.index(hoje)
+    else:
+        indice_padrao = len(datas_disponiveis) - 1
+
     dia_sel = st.selectbox(
         "Selecione o dia",
-        sorted(df_orc["data"].unique())
+        datas_disponiveis,
+        index=indice_padrao
     )
 
     df_dia = df_orc[df_orc["data"] == dia_sel]
@@ -212,6 +221,7 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
 
     st.dataframe(calendario, use_container_width=True)
+
 
 
 
