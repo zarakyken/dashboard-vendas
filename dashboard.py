@@ -34,7 +34,8 @@ def formato_data_br(data):
 
 def preparar_base(df):
     df = df.rename(columns={
-        "NF-e  Emissão": "data",
+        "NF-e  Emissão": "data_nfe",
+        "CF-e  Emissão": "data_cfe",
         "Vendedor": "vendedor",
         "Produto": "produto",
         "Quantidade": "quantidade",
@@ -43,12 +44,28 @@ def preparar_base(df):
 
     df.columns = [c.lower().strip() for c in df.columns]
 
-    df["data"] = pd.to_datetime(df["data"]).dt.date
+    # =====================================================
+    # TRATAMENTO DE DATA (NF-e prioridade, CF-e fallback)
+    # =====================================================
+
+    df["data"] = df["data_nfe"].fillna(df["data_cfe"])
+
+    # converter para data
+    df["data"] = pd.to_datetime(df["data"], errors="coerce").dt.date
+
+    # remover linhas sem data
+    df = df.dropna(subset=["data"])
+
+    # =====================================================
+    # RESTANTE DO TRATAMENTO
+    # =====================================================
+
     df["quantidade"] = df["quantidade"].astype(float)
     df["valor_unitario"] = df["valor_unitario"].astype(float)
+
     df["valor_total"] = (
         df["quantidade"].abs() * df["valor_unitario"].abs()
-)
+    )
 
     df.loc[df["quantidade"] < 0, "valor_total"] *= -1
 
@@ -414,11 +431,3 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
 
     st.dataframe(calendario, use_container_width=True)
-
-
-
-
-
-
-
-
