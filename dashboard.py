@@ -44,6 +44,8 @@ def preparar_base(df):
 
     df.columns = [c.lower().strip() for c in df.columns]
 
+    
+
     # =====================================================
     # TRATAMENTO DE DATA (NF-e prioridade, CF-e fallback)
     # =====================================================
@@ -93,9 +95,21 @@ if tipo_dashboard == "Dashboard Mensal":
 
     df = preparar_base(pd.read_excel("vendas.xlsx"))
 
-    df_frete = pd.read_excel("frete.xlsx")
+    df_frete = pd.read_excel("frete.xlsx", skiprows=3)
+
+    # Renomear colunas novas
+    df_frete = df_frete.rename(columns={
+        "Vendedor": "vendedor",
+        "Valor Frete": "receita_frete"
+    })
+
+    
+
+    # Padronizar
     df_frete.columns = [c.lower().strip() for c in df_frete.columns]
-    df_frete["receita_frete"] = df_frete["receita_frete"].astype(float)
+
+    # Garantir tipo numérico
+    df_frete["receita_frete"] = pd.to_numeric(df_frete["receita_frete"], errors="coerce").fillna(0)
 
     frete_por_vendedor = (
         df_frete.groupby("vendedor")["receita_frete"].sum().reset_index()
@@ -128,6 +142,16 @@ if tipo_dashboard == "Dashboard Mensal":
     )
 
     # Agrupa frete
+
+    import re
+
+    def limpar_vendedor(nome):
+        nome = str(nome)
+        nome = re.sub(r"\s*\[.*?\]", "", nome)  # remove [xxx]
+        return nome.strip().upper()
+
+    df_frete["vendedor"] = df_frete["vendedor"].apply(limpar_vendedor)
+    
     frete_por_vendedor = (
         df_frete.groupby("vendedor")["receita_frete"]
         .sum()
