@@ -456,7 +456,7 @@ if tipo_dashboard == "Dashboard Mensal":
         pd.to_datetime(df_ciclo_total["data"]).dt.weekday != 6
     ]
 
-    # Agrupar por dia (SEM acumulado)
+    # Agrupar por dia
     vendas_por_dia = (
         df_ciclo_total.groupby("data")["valor_total"]
         .sum()
@@ -464,12 +464,39 @@ if tipo_dashboard == "Dashboard Mensal":
         .sort_values("data")
     )
 
+    # =====================================================
+    # 🔥 COLUNAS AUXILIARES (ORDEM CORRETA)
+    # =====================================================
+
+    # Semana do ciclo
     vendas_por_dia["semana"] = (
         (pd.to_datetime(vendas_por_dia["data"]) - pd.to_datetime(inicio_ciclo))
         .dt.days // 7
     )
 
-    # Criar gráfico
+    # Nome do dia
+    vendas_por_dia["dia_semana_nome"] = pd.to_datetime(
+        vendas_por_dia["data"]
+    ).dt.strftime("%a")
+
+    mapa_dias = {
+        "Mon": "Seg",
+        "Tue": "Ter",
+        "Wed": "Qua",
+        "Thu": "Qui",
+        "Fri": "Sex",
+        "Sat": "Sáb"
+    }
+
+    vendas_por_dia["dia_semana_nome"] = vendas_por_dia["dia_semana_nome"].map(mapa_dias)
+
+    # Média
+    media = vendas_por_dia["valor_total"].mean()
+
+    # =====================================================
+    # 📊 GRÁFICO
+    # =====================================================
+
     import plotly.express as px
 
     fig_linha = px.line(
@@ -487,7 +514,7 @@ if tipo_dashboard == "Dashboard Mensal":
 
     for i, semana in enumerate(semanas):
         dados_semana = vendas_por_dia[vendas_por_dia["semana"] == semana]
-    
+
         fig_linha.add_vrect(
             x0=dados_semana["data"].min(),
             x1=dados_semana["data"].max(),
@@ -497,31 +524,9 @@ if tipo_dashboard == "Dashboard Mensal":
             line_width=0,
         )
 
-    # Criar nome do dia (primeiro!)
-    vendas_por_dia["dia_semana_nome"] = pd.to_datetime(vendas_por_dia["data"]).dt.strftime("%a")
-
-    # Depois traduz
-    mapa_dias = {
-        "Mon": "Seg",
-        "Tue": "Ter",
-        "Wed": "Qua",
-        "Thu": "Qui",
-        "Fri": "Sex",
-        "Sat": "Sáb"
-    }
-
-    vendas_por_dia["dia_semana_nome"] = vendas_por_dia["dia_semana_nome"].map(mapa_dias)
-
-    
-
-    media = vendas_por_dia["valor_total"].mean()
-
-    fig_linha.add_hline(
-        y=media,
-        line_dash="dash",
-        annotation_text="Média diária",
-        annotation_position="top left"
-    )
+    # =====================================================
+    # 📈 LINHA DA MÉDIA (UMA SÓ)
+    # =====================================================
 
     fig_linha.add_hline(
         y=media,
@@ -531,11 +536,18 @@ if tipo_dashboard == "Dashboard Mensal":
         annotation_position="top left"
     )
 
+    # =====================================================
+    # 🎯 TOOLTIP FORMATADO
+    # =====================================================
 
     fig_linha.update_traces(
         customdata=vendas_por_dia["dia_semana_nome"],
         hovertemplate="Data: %{x}<br>Dia: %{customdata}<br>Vendas: R$ %{y:,.2f}<extra></extra>"
     )
+
+    # =====================================================
+    # 🧭 EIXO X COM DIA + DATA
+    # =====================================================
 
     fig_linha.update_layout(
         xaxis=dict(
@@ -549,10 +561,9 @@ if tipo_dashboard == "Dashboard Mensal":
                 )
             ]
         ),
-    xaxis_title="Data",
-    yaxis_title="Valor Vendido"
+        xaxis_title="Data",
+        yaxis_title="Valor Vendido"
     )
-    
 
     st.plotly_chart(fig_linha, use_container_width=True)
 
