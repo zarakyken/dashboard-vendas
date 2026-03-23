@@ -436,7 +436,7 @@ if tipo_dashboard == "Dashboard Mensal":
     st.metric(
         "💰 Total do Dia",
         formato_real(total_dia),
-        f"{variacao:.2f}% vs ontem",
+        f"{variacao:.2f}% vs dia anterior",
         delta_color=delta_cor
     )
 
