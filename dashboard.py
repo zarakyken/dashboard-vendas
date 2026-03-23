@@ -374,16 +374,28 @@ if tipo_dashboard == "Dashboard Mensal":
         unsafe_allow_html=True
     )
 
+    # =====================================================
+    # 🎯 META DIÁRIA POR VENDEDOR
+    # =====================================================
+
+    # Total de dias do ciclo (sem domingo)
+    datas_ciclo = pd.date_range(inicio_ciclo, fim_ciclo)
+    dias_ciclo = len([d for d in datas_ciclo if d.weekday() != 6])
+
+    # Quantidade de vendedores
+    qtd_vendedores = df["vendedor"].nunique()
+
+    
+
+    import plotly.express as px
+
     # -------- VENDAS DIÁRIAS (SELEÇÃO POR DATA) --------
     st.subheader("📅 Vendas do Dia")
 
     datas_disponiveis = sorted(df["data"].unique())
     hoje = datetime.today().date()
 
-    if hoje in datas_disponiveis:
-        indice_padrao = datas_disponiveis.index(hoje)
-    else:
-        indice_padrao = len(datas_disponiveis) - 1
+    indice_padrao = datas_disponiveis.index(hoje) if hoje in datas_disponiveis else len(datas_disponiveis) - 1
 
     dia_sel = st.selectbox(
         "Selecione a data",
@@ -397,14 +409,158 @@ if tipo_dashboard == "Dashboard Mensal":
     st.markdown(f"### 🗓️ {titulo_dia} ({formato_data_br(dia_sel)})")
 
     # =====================================================
-    # KPIs DO DIA
+    # 📈 TENDÊNCIA (DIA ANTERIOR)
     # =====================================================
 
+    # 🔥 PRIMEIRO calcula o total do dia
     total_dia = df_dia["valor_total"].sum()
-    qtd_vendedores = df_dia["vendedor"].nunique()
+
+    # Depois calcula dia anterior
+    data_anterior = dia_sel - pd.Timedelta(days=1)
+    df_dia_anterior = df[df["data"] == data_anterior]
+
+    total_dia_anterior = df_dia_anterior["valor_total"].sum()
+
+    # Variação
+    if total_dia_anterior > 0:
+        variacao = ((total_dia - total_dia_anterior) / total_dia_anterior) * 100
+    else:
+        variacao = 0
+
+    # =====================================================
+    # KPI
+    # =====================================================
+
+    delta_cor = "normal" if variacao >= 0 else "inverse"
+
+    st.metric(
+        "💰 Total do Dia",
+        formato_real(total_dia),
+        f"{variacao:.2f}% vs ontem",
+        delta_color=delta_cor
+    )
+
+    # =====================================================
+    # 📈 VENDAS POR DIA (CICLO)
+    # =====================================================
+
+    st.markdown("### 📈 Vendas por Dia no Ciclo")
+
+    df_ciclo_total = df[
+        (df["data"] >= inicio_ciclo) &
+        (df["data"] <= fim_ciclo)
+    ].copy()
+
+    # Remover domingos
+    df_ciclo_total = df_ciclo_total[
+        pd.to_datetime(df_ciclo_total["data"]).dt.weekday != 6
+    ]
+
+    # Agrupar por dia (SEM acumulado)
+    vendas_por_dia = (
+        df_ciclo_total.groupby("data")["valor_total"]
+        .sum()
+        .reset_index()
+        .sort_values("data")
+    )
+
+    vendas_por_dia["semana"] = (
+        (pd.to_datetime(vendas_por_dia["data"]) - pd.to_datetime(inicio_ciclo))
+        .dt.days // 7
+    )
+
+    # Criar gráfico
+    import plotly.express as px
+
+    fig_linha = px.line(
+        vendas_por_dia,
+        x="data",
+        y="valor_total",
+        markers=True
+    )
+
+    # =====================================================
+    # 🎨 FUNDO POR SEMANA
+    # =====================================================
+
+    semanas = vendas_por_dia["semana"].unique()
+
+    for i, semana in enumerate(semanas):
+        dados_semana = vendas_por_dia[vendas_por_dia["semana"] == semana]
+    
+        fig_linha.add_vrect(
+            x0=dados_semana["data"].min(),
+            x1=dados_semana["data"].max(),
+            fillcolor="lightgrey" if i % 2 == 0 else "white",
+            opacity=0.2,
+            layer="below",
+            line_width=0,
+        )
+
+    # Criar nome do dia (primeiro!)
+    vendas_por_dia["dia_semana_nome"] = pd.to_datetime(vendas_por_dia["data"]).dt.strftime("%a")
+
+    # Depois traduz
+    mapa_dias = {
+        "Mon": "Seg",
+        "Tue": "Ter",
+        "Wed": "Qua",
+        "Thu": "Qui",
+        "Fri": "Sex",
+        "Sat": "Sáb"
+    }
+
+    vendas_por_dia["dia_semana_nome"] = vendas_por_dia["dia_semana_nome"].map(mapa_dias)
+
     
 
-    # Top vendedor
+    media = vendas_por_dia["valor_total"].mean()
+
+    fig_linha.add_hline(
+        y=media,
+        line_dash="dash",
+        annotation_text="Média diária",
+        annotation_position="top left"
+    )
+
+    fig_linha.add_hline(
+        y=media,
+        line_dash="dash",
+        line_color="green",
+        annotation_text="Média diária",
+        annotation_position="top left"
+    )
+
+
+    fig_linha.update_traces(
+        customdata=vendas_por_dia["dia_semana_nome"],
+        hovertemplate="Data: %{x}<br>Dia: %{customdata}<br>Vendas: R$ %{y:,.2f}<extra></extra>"
+    )
+
+    fig_linha.update_layout(
+        xaxis=dict(
+            tickmode='array',
+            tickvals=vendas_por_dia["data"],
+            ticktext=[
+                f"{d.strftime('%d/%m')} ({ds})"
+                for d, ds in zip(
+                    pd.to_datetime(vendas_por_dia["data"]),
+                    vendas_por_dia["dia_semana_nome"]
+                )
+            ]
+        ),
+    xaxis_title="Data",
+    yaxis_title="Valor Vendido"
+    )
+    
+
+    st.plotly_chart(fig_linha, use_container_width=True)
+
+    
+    # =====================================================
+    # 📊 VENDAS POR VENDEDOR (GRÁFICO)
+    # =====================================================
+
     ranking = (
         df_dia.groupby("vendedor")["valor_total"]
         .sum()
@@ -412,35 +568,62 @@ if tipo_dashboard == "Dashboard Mensal":
         .sort_values("valor_total", ascending=False)
     )
 
-    top_vendedor = ranking.iloc[0]["vendedor"] if not ranking.empty else "-"
-    top_vendedor_valor = ranking.iloc[0]["valor_total"] if not ranking.empty else 0
+    st.markdown("### 📊 Vendas por Vendedor")
 
-    # Top produto
-    top_produto_df = (
+    if not ranking.empty:
+        fig_vendedores = px.bar(
+            ranking,
+            x="vendedor",
+            y="valor_total",
+            text="valor_total"
+        )
+
+        fig_vendedores.update_traces(
+            texttemplate="R$ %{y:,.2f}",
+            hovertemplate="<b>%{x}</b><br>Vendas: R$ %{y:,.2f}<extra></extra>"
+        )
+
+        fig_vendedores.update_layout(
+            xaxis_title="Vendedor",
+            yaxis_title="Valor Vendido",
+        )
+
+        st.plotly_chart(fig_vendedores, use_container_width=True)
+    
+    
+
+    # =====================================================
+    # 📊 PRODUTOS (GRÁFICO POR VALOR)
+    # =====================================================
+
+    produtos = (
         df_dia.groupby("produto")["valor_total"]
         .sum()
         .reset_index()
         .sort_values("valor_total", ascending=False)
     )
 
-    top_produto = top_produto_df.iloc[0]["produto"] if not top_produto_df.empty else "-"
-    top_produto_valor = top_produto_df.iloc[0]["valor_total"] if not top_produto_df.empty else 0
+    st.markdown("### 📊 Vendas por Produto")
 
-    # Exibição dos KPIs
-    k1, k2, k3 = st.columns(3)
+    if not produtos.empty:
+        fig_produtos = px.bar(
+            produtos.head(10),  # top 10
+            x="produto",
+            y="valor_total",
+            text="valor_total"
+        )
 
-    k1.metric("💰 Total do Dia", formato_real(total_dia))
-    k2.metric("🥇 Top Vendedor", f"{top_vendedor}", formato_real(top_vendedor_valor))
-    k3.metric("🔥 Top Produto", f"{top_produto}", formato_real(top_produto_valor))
+        fig_produtos.update_traces(
+            texttemplate="R$ %{y:,.2f}",
+            hovertemplate="<b>%{x}</b><br>Vendas: R$ %{y:,.2f}<extra></extra>"
+        )
 
-    # =====================================================
-    # TABELA DE VENDAS POR VENDEDOR
-    # =====================================================
+        fig_produtos.update_layout(
+            xaxis_title="Produto",
+            yaxis_title="Valor Vendido",
+        )
 
-    vendas_dia = ranking.copy()
-    vendas_dia["valor_total"] = vendas_dia["valor_total"].apply(formato_real)
-
-    st.dataframe(vendas_dia, use_container_width=True)
+        st.plotly_chart(fig_produtos, use_container_width=True)
 
 # =====================================================
 # ORÇAMENTOS EM ABERTO (INALTERADO)
