@@ -43,6 +43,7 @@ def preparar_base(df):
     })
 
     df.columns = [c.lower().strip() for c in df.columns]
+    df["vendedor"] = df["vendedor"].astype(str).str.strip().str.upper()
 
     
 
@@ -105,14 +106,29 @@ if tipo_dashboard == "Dashboard Mensal":
 
     
 
-    # Padronizar
+    import re
+
+    # Padronizar colunas
     df_frete.columns = [c.lower().strip() for c in df_frete.columns]
 
-    # Garantir tipo numérico
-    df_frete["receita_frete"] = pd.to_numeric(df_frete["receita_frete"], errors="coerce").fillna(0)
+    # 🔥 LIMPAR VENDEDOR (ANTES DE TUDO)
+    def limpar_vendedor(nome):
+        nome = str(nome)
+        nome = re.sub(r"\s*\[.*?\]", "", nome)
+        return nome.strip().upper()
 
+    df_frete["vendedor"] = df_frete["vendedor"].apply(limpar_vendedor)
+
+    # Garantir tipo numérico
+    df_frete["receita_frete"] = pd.to_numeric(
+        df_frete["receita_frete"], errors="coerce"
+    ).fillna(0)
+
+    # Agora sim agrupa corretamente
     frete_por_vendedor = (
-        df_frete.groupby("vendedor")["receita_frete"].sum().reset_index()
+        df_frete.groupby("vendedor")["receita_frete"]
+        .sum()
+        .reset_index()
     )
 
     c1, c2 = st.columns(2)
@@ -142,13 +158,6 @@ if tipo_dashboard == "Dashboard Mensal":
     )
 
     # Agrupa frete
-
-    import re
-
-    def limpar_vendedor(nome):
-        nome = str(nome)
-        nome = re.sub(r"\s*\[.*?\]", "", nome)  # remove [xxx]
-        return nome.strip().upper()
 
     df_frete["vendedor"] = df_frete["vendedor"].apply(limpar_vendedor)
     
@@ -217,23 +226,20 @@ if tipo_dashboard == "Dashboard Mensal":
         suffixes=("", "_ciclo")
     ).fillna(0)
 
-    # dias úteis decorridos
-    dias_passados = len(
-        pd.date_range(inicio_ciclo, hoje - pd.Timedelta(days=1), freq="B")
-    )
+    # Dias trabalhados (sem domingo)
+    datas_passadas = pd.date_range(inicio_ciclo, hoje - pd.Timedelta(days=1))
+    dias_passados = len([d for d in datas_passadas if d.weekday() != 6])
 
-    # dias úteis restantes
-    dias_restantes = len(
-        pd.date_range(hoje, fim_ciclo, freq="B")
-    )
+    # Total de dias do ciclo (sem domingo)
+    datas_total = pd.date_range(inicio_ciclo, fim_ciclo)
+    total_dias = len([d for d in datas_total if d.weekday() != 6])
 
     # média diária
     vendas_vendedor["media_diaria"] = vendas_vendedor["valor_total_ciclo"] / max(dias_passados,1)
 
     # projeção
     vendas_vendedor["projecao"] = (
-        vendas_vendedor["valor_total_ciclo"] +
-        vendas_vendedor["media_diaria"] * dias_restantes
+        vendas_vendedor["media_diaria"] * total_dias
     )
 
     # Status da meta
@@ -314,7 +320,11 @@ if tipo_dashboard == "Dashboard Mensal":
     df["data"] = pd.to_datetime(df["data"]).dt.date
 
     # Filtrar período
-    df_periodo = df[(df["data"] >= inicio_ciclo) & (df["data"] <= fim_ciclo)]
+    df_periodo = df[
+        (df["data"] >= inicio_ciclo) &
+        (df["data"] <= fim_ciclo) &
+        (df["data"] < hoje)
+    ]
 
     # Remover domingos
     df_periodo = df_periodo[pd.to_datetime(df_periodo["data"]).dt.weekday != 6]
@@ -391,6 +401,11 @@ if tipo_dashboard == "Dashboard Mensal":
         .sum()
         .reset_index()
     )
+
+    # Total do dia
+    total_dia = df_dia["valor_total"].sum()
+
+    st.metric("💰 Total do Dia", formato_real(total_dia))
 
     vendas_dia["valor_total"] = vendas_dia["valor_total"].apply(formato_real)
 
