@@ -396,17 +396,48 @@ if tipo_dashboard == "Dashboard Mensal":
     titulo_dia = pd.to_datetime(dia_sel).strftime("%A").capitalize()
     st.markdown(f"### 🗓️ {titulo_dia} ({formato_data_br(dia_sel)})")
 
-    vendas_dia = (
+    # =====================================================
+    # KPIs DO DIA
+    # =====================================================
+
+    total_dia = df_dia["valor_total"].sum()
+    qtd_vendedores = df_dia["vendedor"].nunique()
+    
+
+    # Top vendedor
+    ranking = (
         df_dia.groupby("vendedor")["valor_total"]
         .sum()
         .reset_index()
+        .sort_values("valor_total", ascending=False)
     )
 
-    # Total do dia
-    total_dia = df_dia["valor_total"].sum()
+    top_vendedor = ranking.iloc[0]["vendedor"] if not ranking.empty else "-"
+    top_vendedor_valor = ranking.iloc[0]["valor_total"] if not ranking.empty else 0
 
-    st.metric("💰 Total do Dia", formato_real(total_dia))
+    # Top produto
+    top_produto_df = (
+        df_dia.groupby("produto")["valor_total"]
+        .sum()
+        .reset_index()
+        .sort_values("valor_total", ascending=False)
+    )
 
+    top_produto = top_produto_df.iloc[0]["produto"] if not top_produto_df.empty else "-"
+    top_produto_valor = top_produto_df.iloc[0]["valor_total"] if not top_produto_df.empty else 0
+
+    # Exibição dos KPIs
+    k1, k2, k3 = st.columns(3)
+
+    k1.metric("💰 Total do Dia", formato_real(total_dia))
+    k2.metric("🥇 Top Vendedor", f"{top_vendedor}", formato_real(top_vendedor_valor))
+    k3.metric("🔥 Top Produto", f"{top_produto}", formato_real(top_produto_valor))
+
+    # =====================================================
+    # TABELA DE VENDAS POR VENDEDOR
+    # =====================================================
+
+    vendas_dia = ranking.copy()
     vendas_dia["valor_total"] = vendas_dia["valor_total"].apply(formato_real)
 
     st.dataframe(vendas_dia, use_container_width=True)
