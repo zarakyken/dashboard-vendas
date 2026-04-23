@@ -137,6 +137,10 @@ if tipo_dashboard == "Dashboard Mensal":
 
     df = df[(df["data"] >= data_inicio) & (df["data"] <= data_fim)]
 
+    # 🔐 Controle de acesso por vendedor
+    if perfil != "admin":
+         df = df[df["vendedor"] != "LIMA"]
+
     total_vendas = df["valor_total"].sum()
     total_frete = frete_por_vendedor["receita_frete"].sum()
 
@@ -653,6 +657,11 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     df_orc["data"] = pd.to_datetime(df_orc["data"], errors="coerce").dt.date
     df_orc = df_orc.dropna(subset=["data"])
     df_orc["valor_orcado"] = df_orc["valor_orcado"].astype(float)
+    df_orc["vendedor"] = df_orc["vendedor"].astype(str).str.strip().str.upper()
+
+    # 🔐 Controle de acesso por vendedor
+    if perfil != "admin":
+        df_orc = df_orc[df_orc["vendedor"].str.upper() != "LIMA"]
 
     # --------------------------
     # TOTAIS
