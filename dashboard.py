@@ -362,7 +362,7 @@ if tipo_dashboard == "Dashboard Mensal":
     datas = pd.date_range(inicio_ciclo, fim_ciclo)
     datas = [d.date() for d in datas if d.weekday() != 6]
 
-    total_dias = len(datas)
+    total_dias = len(datas)-2
 
     # Média diária
     media_diaria = faturamento_atual / dias_ocorridos if dias_ocorridos > 0 else 0
