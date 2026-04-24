@@ -131,13 +131,31 @@ if tipo_dashboard == "Dashboard Mensal":
         .reset_index()
     )
 
+    frete_por_vendedor["vendedor"] = frete_por_vendedor["vendedor"].str.upper()
+
+    frete_sem_lima = frete_por_vendedor[
+        frete_por_vendedor["vendedor"] != "LIMA"
+    ]
+
+    total_frete = frete_sem_lima["receita_frete"].sum()
+
     c1, c2 = st.columns(2)
     data_inicio = c1.date_input("Data inicial", min(df["data"]))
     data_fim = c2.date_input("Data final", max(df["data"]))
 
     df = df[(df["data"] >= data_inicio) & (df["data"] <= data_fim)]
 
-    total_vendas = df["valor_total"].sum()
+    # 🔐 Separação de base
+    df["vendedor"] = df["vendedor"].astype(str).str.strip().str.upper()
+
+    df_lima = df[df["vendedor"] == "LIMA"]
+    df_sem_lima = df[df["vendedor"] != "LIMA"]
+
+    # Controle por perfil
+    if perfil != "admin":
+        df = df_sem_lima.copy()
+
+    total_vendas = df_sem_lima["valor_total"].sum()
     total_frete = frete_por_vendedor["receita_frete"].sum()
 
     k1, k2, k3 = st.columns(3)
@@ -181,9 +199,11 @@ if tipo_dashboard == "Dashboard Mensal":
 
     # Calcula meta individual
     qtd_vendedores = vendas_vendedor["vendedor"].nunique()
-    meta_individual = META_MENSAL / qtd_vendedores if qtd_vendedores > 0 else 0
+    meta_individual = META_MENSAL / 7
 
     vendas_vendedor["Meta Individual"] = meta_individual
+
+    
 
     # =====================================================
     # PROJEÇÃO DE FATURAMENTO (CICLO 26-25)
@@ -320,7 +340,7 @@ if tipo_dashboard == "Dashboard Mensal":
     df["data"] = pd.to_datetime(df["data"]).dt.date
 
     # Filtrar período
-    df_periodo = df[
+    df_periodo = df_sem_lima[
         (df["data"] >= inicio_ciclo) &
         (df["data"] <= fim_ciclo) &
         (df["data"] < hoje)
@@ -374,6 +394,8 @@ if tipo_dashboard == "Dashboard Mensal":
         unsafe_allow_html=True
     )
 
+    
+
     # =====================================================
     # 🎯 META DIÁRIA POR VENDEDOR
     # =====================================================
@@ -403,7 +425,7 @@ if tipo_dashboard == "Dashboard Mensal":
         index=indice_padrao
     )
 
-    df_dia = df[df["data"] == dia_sel]
+    df_dia = df_sem_lima[df["data"] == dia_sel]
 
     titulo_dia = pd.to_datetime(dia_sel).strftime("%A").capitalize()
     st.markdown(f"### 🗓️ {titulo_dia} ({formato_data_br(dia_sel)})")
@@ -446,7 +468,7 @@ if tipo_dashboard == "Dashboard Mensal":
 
     st.markdown("### 📈 Vendas por Dia no Ciclo")
 
-    df_ciclo_total = df[
+    df_ciclo_total = df_sem_lima[
         (df["data"] >= inicio_ciclo) &
         (df["data"] <= fim_ciclo)
     ].copy()
@@ -569,7 +591,7 @@ if tipo_dashboard == "Dashboard Mensal":
 
     
     # =====================================================
-    # 📊 VENDAS POR VENDEDOR (GRÁFICO)
+    # 📊  (GRÁFICO)
     # =====================================================
 
     ranking = (
@@ -654,10 +676,22 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     df_orc = df_orc.dropna(subset=["data"])
     df_orc["valor_orcado"] = df_orc["valor_orcado"].astype(float)
 
+    df_orc["vendedor"] = df_orc["vendedor"].astype(str).str.strip().str.upper()
+
+    df_orc_lima = df_orc[df_orc["vendedor"] == "LIMA"]
+    df_orc_sem_lima = df_orc[df_orc["vendedor"] != "LIMA"]
+
+    if perfil != "admin":
+        df_orc = df_orc_sem_lima.copy()
+
     # --------------------------
     # TOTAIS
     # --------------------------
-    total_geral_orcamentos = df_orc["valor_orcado"].sum()
+
+    
+    total_geral_orcamentos = df_orc_sem_lima["valor_orcado"].sum()
+
+    
 
     datas_disponiveis = sorted(df_orc["data"].unique())
     hoje = datetime.today().date()
@@ -673,8 +707,8 @@ elif tipo_dashboard == "Orçamentos em Aberto":
         index=indice_padrao
     )
 
-    df_dia = df_orc[df_orc["data"] == dia_sel]
-    total_dia_orcamentos = df_dia["valor_orcado"].sum()
+    df_dia_total = df_orc_sem_lima[df_orc_sem_lima["data"] == dia_sel]
+    total_dia_orcamentos = df_dia_total["valor_orcado"].sum()
 
     k1, k2 = st.columns(2)
     k1.metric("💰 Total Geral de Orçamentos", formato_real(total_geral_orcamentos))
@@ -687,7 +721,7 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     st.subheader(f"🗓️ {titulo_dia} ({formato_data_br(dia_sel)})")
 
     calendario = (
-        df_dia.groupby("vendedor")["valor_orcado"]
+        df_dia_total.groupby("vendedor")["valor_orcado"]
         .sum()
         .reset_index()
     )
@@ -695,5 +729,20 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
 
     st.dataframe(calendario, use_container_width=True)
+    
+    if perfil == "admin" and not df_orc_lima.empty:
 
+        st.divider()
+        st.subheader("🔒 Orçamentos - LIMA")
+
+        total_geral_orcamentos_lima = df_orc_lima["valor_orcado"].sum()
+
+        df_dia_total_lima = df_orc_lima[df_orc_lima["data"] == dia_sel]
+        total_dia_orcamentos = df_dia_total_lima["valor_orcado"].sum()
+
+        k1, k2 = st.columns(2)
+        k1.metric("📅 Total do Dia", formato_real(total_dia_orcamentos))
+        k2.metric("💰 Total Geral de Orçamentos Lima", formato_real(total_geral_orcamentos_lima))
+
+        
 
