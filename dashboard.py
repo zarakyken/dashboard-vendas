@@ -43,8 +43,6 @@ def preparar_base(df):
     })
 
     df.columns = [c.lower().strip() for c in df.columns]
-    df["vendedor"] = df["vendedor"].astype(str).str.strip().str.upper()
-
     
 
     # =====================================================
@@ -72,7 +70,32 @@ def preparar_base(df):
 
     df.loc[df["quantidade"] < 0, "valor_total"] *= -1
 
-    return df
+    df["vendedor"] = df["vendedor"].astype(str).str.strip().str.upper()
+
+    # =====================================================
+    # CONTROLE DE VISUALIZAÇÃO VENDEDORES RESTRITOS
+    # =====================================================
+
+    VENDEDORES_RESTRITOS = ["LIMA", "EDUARDO"]
+
+    if perfil != "admin":
+        # Usuário comum não vê esses vendedores
+        df = df[
+            ~df["vendedor"].isin(VENDEDORES_RESTRITOS)
+        ]
+
+    # Base separada para KPIs gerais (mesmo admin não soma)
+    df_kpi = df[
+        ~df["vendedor"].isin(VENDEDORES_RESTRITOS)
+    ].copy()
+
+    # Base exclusiva dos vendedores restritos (somente admin)
+    df_restritos = df[
+        df["vendedor"].isin(VENDEDORES_RESTRITOS)
+    ].copy()
+ 
+
+    return df, df_kpi, df_restritos
 
 # =====================================================
 # SIDEBAR
@@ -94,7 +117,9 @@ else:
 if tipo_dashboard == "Dashboard Mensal":
     st.title("📊 Dashboard Mensal de Vendas")
 
-    df = preparar_base(pd.read_excel("vendas.xlsx"))
+    df, df_kpi, df_restritos = preparar_base(
+        pd.read_excel("vendas.xlsx")
+    )
 
     df_frete = pd.read_excel("frete.xlsx", skiprows=3)
 
@@ -155,7 +180,7 @@ if tipo_dashboard == "Dashboard Mensal":
     if perfil != "admin":
         df = df_sem_lima.copy()
 
-    total_vendas = df_sem_lima["valor_total"].sum()
+    total_vendas = df_kpi["valor_total"].sum()
     total_frete = frete_por_vendedor["receita_frete"].sum()
 
     k1, k2, k3 = st.columns(3)
@@ -362,7 +387,7 @@ if tipo_dashboard == "Dashboard Mensal":
     datas = pd.date_range(inicio_ciclo, fim_ciclo)
     datas = [d.date() for d in datas if d.weekday() != 6]
 
-    total_dias = len(datas)-1
+    total_dias = len(datas)
 
     # Média diária
     media_diaria = faturamento_atual / dias_ocorridos if dias_ocorridos > 0 else 0
@@ -676,6 +701,36 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     df_orc = df_orc.dropna(subset=["data"])
     df_orc["valor_orcado"] = df_orc["valor_orcado"].astype(float)
 
+    # =====================================================
+    # CONTROLE DE VENDEDORES RESTRITOS
+    # =====================================================
+
+    VENDEDORES_RESTRITOS = ["LIMA", "EDUARDO"]
+
+    # Padronizar vendedor
+    df_orc["vendedor"] = (
+        df_orc["vendedor"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    # Base exclusiva admin (LIMA + EDUARDO)
+    df_orc_restritos = df_orc[
+        df_orc["vendedor"].isin(VENDEDORES_RESTRITOS)
+    ].copy()
+
+    # Usuário comum não vê esses vendedores
+    if perfil != "admin":
+        df_orc = df_orc[
+            ~df_orc["vendedor"].isin(VENDEDORES_RESTRITOS)
+        ]
+
+    # KPIs nunca somam LIMA + EDUARDO
+    df_orc_kpi = df_orc[
+        ~df_orc["vendedor"].isin(VENDEDORES_RESTRITOS)
+    ].copy()
+
     df_orc["vendedor"] = df_orc["vendedor"].astype(str).str.strip().str.upper()
 
     df_orc_lima = df_orc[df_orc["vendedor"] == "LIMA"]
@@ -689,7 +744,7 @@ elif tipo_dashboard == "Orçamentos em Aberto":
     # --------------------------
 
     
-    total_geral_orcamentos = df_orc_sem_lima["valor_orcado"].sum()
+    total_geral_orcamentos = df_orc_kpi["valor_orcado"].sum()
 
     
 
@@ -707,8 +762,12 @@ elif tipo_dashboard == "Orçamentos em Aberto":
         index=indice_padrao
     )
 
-    df_dia_total = df_orc_sem_lima[df_orc_sem_lima["data"] == dia_sel]
-    total_dia_orcamentos = df_dia_total["valor_orcado"].sum()
+    df_dia_total = df_orc[df_orc["data"] == dia_sel]
+    df_dia_kpi = df_orc_kpi[
+        df_orc_kpi["data"] == dia_sel
+    ]
+
+    total_dia_orcamentos = df_dia_kpi["valor_orcado"].sum()
 
     k1, k2 = st.columns(2)
     k1.metric("💰 Total Geral de Orçamentos", formato_real(total_geral_orcamentos))
@@ -730,19 +789,7 @@ elif tipo_dashboard == "Orçamentos em Aberto":
 
     st.dataframe(calendario, use_container_width=True)
     
-    if perfil == "admin" and not df_orc_lima.empty:
-
-        st.divider()
-        st.subheader("🔒 Orçamentos - LIMA")
-
-        total_geral_orcamentos_lima = df_orc_lima["valor_orcado"].sum()
-
-        df_dia_total_lima = df_orc_lima[df_orc_lima["data"] == dia_sel]
-        total_dia_orcamentos = df_dia_total_lima["valor_orcado"].sum()
-
-        k1, k2 = st.columns(2)
-        k1.metric("📅 Total do Dia", formato_real(total_dia_orcamentos))
-        k2.metric("💰 Total Geral de Orçamentos Lima", formato_real(total_geral_orcamentos_lima))
+    
 
         
 
