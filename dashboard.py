@@ -1,4 +1,4 @@
-import streamlit as st
+    import streamlit as st
 import pandas as pd
 from datetime import datetime
 
@@ -365,7 +365,7 @@ if tipo_dashboard == "Dashboard Mensal":
     df["data"] = pd.to_datetime(df["data"]).dt.date
 
     # Filtrar período
-    df_periodo = df_sem_lima[
+    df_periodo = df_kpi[
         (df["data"] >= inicio_ciclo) &
         (df["data"] <= fim_ciclo) &
         (df["data"] < hoje)
@@ -450,7 +450,7 @@ if tipo_dashboard == "Dashboard Mensal":
         index=indice_padrao
     )
 
-    df_dia = df_sem_lima[df["data"] == dia_sel]
+    df_dia = df_kpi[df["data"] == dia_sel]
 
     titulo_dia = pd.to_datetime(dia_sel).strftime("%A").capitalize()
     st.markdown(f"### 🗓️ {titulo_dia} ({formato_data_br(dia_sel)})")
