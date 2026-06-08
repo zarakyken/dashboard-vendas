@@ -1,795 +1,1109 @@
-import streamlit as st
 import pandas as pd
+import math
 from datetime import datetime
+import tkinter as tk
+from tkinter import filedialog
+from tkinter import ttk
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import os
+
+df = pd.DataFrame()
+produtos_portfolio = []
+
+import os
+
+df = None
+caminho_base = None
 
 
-# =====================================================
-# CONFIGURAÇÃO INICIAL
-# =====================================================
-st.set_page_config(page_title="Dashboard de Vendas", layout="wide")
+def formatar_moeda(valor):
 
+    if pd.isna(valor):
+        return "R$ 0,00"
 
-# =====================================================
-# CONSTANTES
-# =====================================================
-META_MENSAL = 2_400_000.00
-
-# =====================================================
-# CONTROLE DE PERFIL
-# =====================================================
-query_params = st.query_params
-perfil = query_params.get("perfil", "admin")  # admin | mensal
-
-# =====================================================
-# FUNÇÕES AUXILIARES
-# =====================================================
-def formato_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def formato_numero(valor):
-    return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+caminho_base = None
 
-def formato_data_br(data):
-    return pd.to_datetime(data).strftime("%d/%m/%Y")
+def carregar_portfolio():
 
-def preparar_base(df):
-    df = df.rename(columns={
-        "NF-e  Emissão": "data_nfe",
-        "CF-e  Emissão": "data_cfe",
-        "Vendedor": "vendedor",
-        "Produto": "produto",
-        "Quantidade": "quantidade",
-        "Valor  Unitário": "valor_unitario"
-    })
+    pasta = os.path.dirname(os.path.abspath(__file__))
+    caminho = os.path.join(pasta, "Portifolio.xlsx")
 
-    df.columns = [c.lower().strip() for c in df.columns]
-    
+    if os.path.exists(caminho):
 
-    # =====================================================
-    # TRATAMENTO DE DATA (NF-e prioridade, CF-e fallback)
-    # =====================================================
+        df_port = pd.read_excel(caminho)
 
-    df["data"] = df["data_nfe"].fillna(df["data_cfe"])
+        df_port.columns = df_port.columns.str.strip()
 
-    # converter para data
-    df["data"] = pd.to_datetime(df["data"], errors="coerce").dt.date
+        produtos = (
+            df_port.iloc[:,0]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
 
-    # remover linhas sem data
-    df = df.dropna(subset=["data"])
+        return list(produtos)
 
-    # =====================================================
-    # RESTANTE DO TRATAMENTO
-    # =====================================================
-
-    df["quantidade"] = df["quantidade"].astype(float)
-    df["valor_unitario"] = df["valor_unitario"].astype(float)
-
-    df["valor_total"] = (
-        df["quantidade"].abs() * df["valor_unitario"].abs()
-    )
-
-    df.loc[df["quantidade"] < 0, "valor_total"] *= -1
-
-    df["vendedor"] = df["vendedor"].astype(str).str.strip().str.upper()
-
-    # =====================================================
-    # CONTROLE DE VISUALIZAÇÃO VENDEDORES RESTRITOS
-    # =====================================================
-
-    VENDEDORES_RESTRITOS = ["LIMA", "EDUARDO"]
-
-    if perfil != "admin":
-        # Usuário comum não vê esses vendedores
-        df = df[
-            ~df["vendedor"].isin(VENDEDORES_RESTRITOS)
-        ]
-
-    # Base separada para KPIs gerais (mesmo admin não soma)
-    df_kpi = df[
-        ~df["vendedor"].isin(VENDEDORES_RESTRITOS)
-    ].copy()
-
-    # Base exclusiva dos vendedores restritos (somente admin)
-    df_restritos = df[
-        df["vendedor"].isin(VENDEDORES_RESTRITOS)
-    ].copy()
- 
-
-    return df, df_kpi, df_restritos
-
-# =====================================================
-# SIDEBAR
-# =====================================================
-st.sidebar.title("📊 Relatórios")
-
-if perfil == "admin":
-    tipo_dashboard = st.sidebar.radio(
-        "Selecione o Dashboard",
-        ["Dashboard Mensal", "Orçamentos em Aberto"]
-    )
-else:
-    tipo_dashboard = "Dashboard Mensal"
-    st.sidebar.info("Acesso restrito ao Dashboard Mensal")
-
-# =====================================================
-# DASHBOARD MENSAL (ATUALIZADO)
-# =====================================================
-if tipo_dashboard == "Dashboard Mensal":
-    st.title("📊 Dashboard Mensal de Vendas")
-
-    df, df_kpi, df_restritos = preparar_base(
-        pd.read_excel("vendas.xlsx")
-    )
-
-    df_frete = pd.read_excel("frete.xlsx", skiprows=3)
-
-    # Renomear colunas novas
-    df_frete = df_frete.rename(columns={
-        "Vendedor": "vendedor",
-        "Valor Frete": "receita_frete"
-    })
-
-    
-
-    import re
-
-    # Padronizar colunas
-    df_frete.columns = [c.lower().strip() for c in df_frete.columns]
-
-    # 🔥 LIMPAR VENDEDOR (ANTES DE TUDO)
-    def limpar_vendedor(nome):
-        nome = str(nome)
-        nome = re.sub(r"\s*\[.*?\]", "", nome)
-        return nome.strip().upper()
-
-    df_frete["vendedor"] = df_frete["vendedor"].apply(limpar_vendedor)
-
-    # Garantir tipo numérico
-    df_frete["receita_frete"] = pd.to_numeric(
-        df_frete["receita_frete"], errors="coerce"
-    ).fillna(0)
-
-    # Agora sim agrupa corretamente
-    frete_por_vendedor = (
-        df_frete.groupby("vendedor")["receita_frete"]
-        .sum()
-        .reset_index()
-    )
-
-    frete_por_vendedor["vendedor"] = frete_por_vendedor["vendedor"].str.upper()
-
-    frete_sem_lima = frete_por_vendedor[
-        frete_por_vendedor["vendedor"] != "LIMA"
-    ]
-
-    total_frete = frete_sem_lima["receita_frete"].sum()
-
-    c1, c2 = st.columns(2)
-    data_inicio = c1.date_input("Data inicial", min(df["data"]))
-    data_fim = c2.date_input("Data final", max(df["data"]))
-
-    df = df[(df["data"] >= data_inicio) & (df["data"] <= data_fim)]
-
-    # 🔐 Separação de base
-    df["vendedor"] = df["vendedor"].astype(str).str.strip().str.upper()
-
-    df_lima = df[df["vendedor"] == "LIMA"]
-    df_sem_lima = df[df["vendedor"] != "LIMA"]
-
-    # Controle por perfil
-    if perfil != "admin":
-        df = df_sem_lima.copy()
-
-    total_vendas = df_kpi["valor_total"].sum()
-    total_frete = frete_por_vendedor["receita_frete"].sum()
-
-    k1, k2, k3 = st.columns(3)
-    k1.metric("💰 Total de Vendas", formato_real(total_vendas))
-    k2.metric("🚚 Frete Total", formato_real(total_frete))
-    k3.metric("🎯 Meta Mensal", formato_real(META_MENSAL))
-
-    
-
-   # -------- VENDAS + FRETE + META POR VENDEDOR --------
-    st.subheader("👤 Vendas, Frete e Meta por Vendedor")
-
-    # Agrupa vendas
-    vendas_vendedor = (
-        df.groupby("vendedor")["valor_total"]
-        .sum()
-        .reset_index()
-    )
-
-    # Agrupa frete
-
-    df_frete["vendedor"] = df_frete["vendedor"].apply(limpar_vendedor)
-    
-    frete_por_vendedor = (
-        df_frete.groupby("vendedor")["receita_frete"]
-        .sum()
-        .reset_index()
-    )
-
-    # Junta vendas + frete
-    vendas_vendedor = vendas_vendedor.merge(
-        frete_por_vendedor,
-        on="vendedor",
-        how="left"
-    ).fillna(0)
-
-    # Ordena do maior para o menor
-    vendas_vendedor = vendas_vendedor.sort_values(
-        "valor_total", ascending=False
-    )
-
-    # Calcula meta individual
-    qtd_vendedores = vendas_vendedor["vendedor"].nunique()
-    meta_individual = META_MENSAL / 7
-
-    vendas_vendedor["Meta Individual"] = meta_individual
-
-    
-
-    # =====================================================
-    # PROJEÇÃO DE FATURAMENTO (CICLO 26-25)
-    # =====================================================
-
-    hoje = pd.Timestamp.today().date()
-
-    # Determinar início do ciclo
-    if hoje.day >= 26:
-        inicio_ciclo = hoje.replace(day=26)
     else:
-        mes_anterior = (pd.Timestamp(hoje) - pd.DateOffset(months=1)).date()
-        inicio_ciclo = mes_anterior.replace(day=26)
 
-    # Determinar fim do ciclo
-    if hoje.day >= 26:
-        proximo_mes = (pd.Timestamp(hoje) + pd.DateOffset(months=1)).date()
-        fim_ciclo = proximo_mes.replace(day=25)
-    else:
-        fim_ciclo = hoje.replace(day=25)
+        print("Arquivo Portifolio.xlsx não encontrado")
+        return []
 
-    # Dados do ciclo
-    df_ciclo = df[(df["data"] >= inicio_ciclo) & (df["data"] < hoje)]
+def carregar_automatico():
 
-    # Remover domingos
-    df_ciclo = df_ciclo[pd.to_datetime(df_ciclo["data"]).dt.weekday != 6]
+    global df
+    global caminho_base
 
-    # vendas por vendedor no ciclo
-    vendas_ciclo = (
-        df_ciclo.groupby("vendedor")["valor_total"]
-        .sum()
-        .reset_index()
+    pasta_sistema = os.path.dirname(os.path.abspath(__file__))
+
+    caminho = os.path.join(
+        pasta_sistema,
+        "Vendas_mensais.xlsx"
     )
 
-    # juntar com tabela principal
-    vendas_vendedor = vendas_vendedor.merge(
-        vendas_ciclo,
-        on="vendedor",
-        how="left",
-        suffixes=("", "_ciclo")
-    ).fillna(0)
+    caminho_base = caminho
 
-    # Dias trabalhados (sem domingo)
-    datas_passadas = pd.date_range(inicio_ciclo, hoje - pd.Timedelta(days=1))
-    dias_passados = len([d for d in datas_passadas if d.weekday() != 6])
+    if os.path.exists(caminho):
 
-    # Total de dias do ciclo (sem domingo)
-    datas_total = pd.date_range(inicio_ciclo, fim_ciclo)
-    total_dias = len([d for d in datas_total if d.weekday() != 6])
+        try:
+            df = calcular_previsao(caminho)
 
-    # média diária
-    vendas_vendedor["media_diaria"] = vendas_vendedor["valor_total_ciclo"] / max(dias_passados,1)
+            global produtos_portfolio
 
-    # projeção
-    vendas_vendedor["projecao"] = (
-        vendas_vendedor["media_diaria"] * total_dias
-    )
+            produtos_portfolio = carregar_portfolio()
 
-    # Status da meta
-    vendas_vendedor["Status Meta"] = vendas_vendedor["valor_total"].apply(
-        lambda x: "🟢 Atingiu a Meta" if x >= meta_individual else "🔴 Não Atingiu"
-    )
-
-    # % Frete sobre vendas
-    vendas_vendedor["% Frete / Vendas"] = (
-        vendas_vendedor["receita_frete"] / vendas_vendedor["valor_total"] * 100
-    ).fillna(0)
-
-    # Formatação
-    vendas_vendedor["Vendas"] = vendas_vendedor["valor_total"].apply(formato_real)
-    vendas_vendedor["Frete Cobrado"] = vendas_vendedor["receita_frete"].apply(formato_real)
-    vendas_vendedor["Meta Individual"] = vendas_vendedor["Meta Individual"].apply(formato_real)
-    vendas_vendedor["% Frete / Vendas"] = vendas_vendedor["% Frete / Vendas"].apply(
-        lambda x: f"{x:.2f}%"
-    )
-    vendas_vendedor["Projeção"] = vendas_vendedor["projecao"].apply(formato_real)
-
-    # Exibição final
-    st.dataframe(
-        vendas_vendedor[
-            [
-                "vendedor",
-                "Vendas",
-                "Frete Cobrado",
-                "% Frete / Vendas",
-                "Meta Individual",
-                "Projeção",
-                "Status Meta",
-                
+            produtos_portfolio = [
+                str(p).strip().upper()
+                for p in produtos_portfolio
             ]
-        ],
-        use_container_width=True
-    )
 
-    # =====================================================
-    # PROGRESSO DA META (BASEADO NO VENDIDO)
-    # =====================================================
+            atualizar_tabela(df)
+            atualizar_kpi(df)
+            atualizar_filtro_familia()
+            atualizar_filtro_fornecedor()
 
-    progresso_meta = total_vendas / META_MENSAL
+        except Exception as e:
+            print("Erro ao carregar arquivo:", e)
 
-    if progresso_meta > 1:
-        progresso_meta = 1
-
-    percentual_meta = (total_vendas / META_MENSAL) * 100
-
-    st.markdown("### 🎯 Progresso da Meta (Realizado)")
-
-    st.progress(progresso_meta)
-
-    st.markdown(
-        f"**{percentual_meta:,.2f}% da meta atingida**".replace(",", "X").replace(".", ",").replace("X", ".")
-    )
-
-
-    # =====================================================
-    # PROJEÇÃO DE FATURAMENTO (CICLO 26 → 25) SEM DOMINGOS
-    # =====================================================
-
-    from datetime import datetime, timedelta
-
-    hoje = datetime.today().date()
-
-    # Determinar início e fim do ciclo (26 -> 25)
-    if hoje.day >= 26:
-        inicio_ciclo = hoje.replace(day=26)
-        proximo_mes = (inicio_ciclo + timedelta(days=32)).replace(day=1)
-        fim_ciclo = proximo_mes.replace(day=25)
     else:
-        mes_anterior = (hoje.replace(day=1) - timedelta(days=1))
-        inicio_ciclo = mes_anterior.replace(day=26)
-        fim_ciclo = hoje.replace(day=25)
-
-    # Converter data
-    df["data"] = pd.to_datetime(df["data"]).dt.date
-
-    # Filtrar período
-    df_periodo = df_kpi[
-        (df["data"] >= inicio_ciclo) &
-        (df["data"] <= fim_ciclo) &
-        (df["data"] < hoje)
-    ]
-
-    # Remover domingos
-    df_periodo = df_periodo[pd.to_datetime(df_periodo["data"]).dt.weekday != 6]
-
-    # Remover dia atual
-    df_periodo = df_periodo[df_periodo["data"] < hoje]
-
-    # Faturamento atual
-    faturamento_atual = df_periodo["valor_total"].sum()
-
-    # Dias já ocorridos
-    dias_ocorridos = df_periodo["data"].nunique()
-
-    # Total de dias úteis no ciclo (sem domingos)
-    datas = pd.date_range(inicio_ciclo, fim_ciclo)
-    datas = [d.date() for d in datas if d.weekday() != 6]
-
-    total_dias = len(datas)
-
-    # Média diária
-    media_diaria = faturamento_atual / dias_ocorridos if dias_ocorridos > 0 else 0
-
-    # Projeção final
-    projecao = media_diaria * total_dias
-
-    
-
-    if projecao >= META_MENSAL:
-        cor = "green"
-        icone = "🟢"
-    else:
-        cor = "red"
-        icone = "🔴"
+        print("Arquivo não encontrado:", caminho)
         
-    col1, col2 = st.columns(2)
+def atualizar_filtro_familia():
 
-    with col1:
-        st.metric("📊 Média diária", formato_real(media_diaria))    
-    with col2:
-        st.markdown("📈 Projeção de vendas")    
-    col2.markdown(
-        f"""
-        <h2 style='color:{cor};'>
-        {icone} {formato_real(projecao)}
-        </h2>
-        """,
-        unsafe_allow_html=True
+    familias = sorted(
+        df["Família"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .unique()
     )
 
-    
+    filtro_familia["values"] = ["Todas"] + list(familias)
+    filtro_familia.set("Todas")
 
-    # =====================================================
-    # 🎯 META DIÁRIA POR VENDEDOR
-    # =====================================================
+def carregar_custo():
 
-    # Total de dias do ciclo (sem domingo)
-    datas_ciclo = pd.date_range(inicio_ciclo, fim_ciclo)
-    dias_ciclo = len([d for d in datas_ciclo if d.weekday() != 6])
+    pasta = os.path.dirname(os.path.abspath(__file__))
 
-    # Quantidade de vendedores
-    qtd_vendedores = df["vendedor"].nunique()
+    caminho_custo = os.path.join(pasta, "Custo.xlsx")
 
-    
+    if os.path.exists(caminho_custo):
 
-    import plotly.express as px
+        df_custo = pd.read_excel(
+            caminho_custo,
+            skiprows=0
+        )
 
-    # -------- VENDAS DIÁRIAS (SELEÇÃO POR DATA) --------
-    st.subheader("📅 Vendas do Dia")
+        df_custo.columns = df_custo.columns.str.strip()
 
-    datas_disponiveis = sorted(df["data"].unique())
-    hoje = datetime.today().date()
+        return df_custo
 
-    indice_padrao = datas_disponiveis.index(hoje) if hoje in datas_disponiveis else len(datas_disponiveis) - 1
-
-    dia_sel = st.selectbox(
-        "Selecione a data",
-        datas_disponiveis,
-        index=indice_padrao
-    )
-
-    df_dia = df_kpi[df["data"] == dia_sel]
-
-    titulo_dia = pd.to_datetime(dia_sel).strftime("%A").capitalize()
-    st.markdown(f"### 🗓️ {titulo_dia} ({formato_data_br(dia_sel)})")
-
-    # =====================================================
-    # 📈 TENDÊNCIA (DIA ANTERIOR)
-    # =====================================================
-
-    # 🔥 PRIMEIRO calcula o total do dia
-    total_dia = df_dia["valor_total"].sum()
-
-    # Depois calcula dia anterior
-    data_anterior = dia_sel - pd.Timedelta(days=1)
-    df_dia_anterior = df[df["data"] == data_anterior]
-
-    total_dia_anterior = df_dia_anterior["valor_total"].sum()
-
-    # Variação
-    if total_dia_anterior > 0:
-        variacao = ((total_dia - total_dia_anterior) / total_dia_anterior) * 100
     else:
-        variacao = 0
 
-    # =====================================================
-    # KPI
-    # =====================================================
+        print("Arquivo Custo.xlsx não encontrado")
+        return None
 
-    delta_cor = "normal" if variacao >= 0 else "inverse"
 
-    st.metric(
-        "💰 Total do Dia",
-        formato_real(total_dia),
-        f"{variacao:.2f}% vs dia anterior",
-        delta_color=delta_cor
-    )
 
-    # =====================================================
-    # 📈 VENDAS POR DIA (CICLO)
-    # =====================================================
 
-    st.markdown("### 📈 Vendas por Dia no Ciclo")
+def arredondar(valor):
 
-    df_ciclo_total = df_sem_lima[
-        (df["data"] >= inicio_ciclo) &
-        (df["data"] <= fim_ciclo)
-    ].copy()
+    if pd.isna(valor):
+        return 0
 
-    # Remover domingos
-    df_ciclo_total = df_ciclo_total[
-        pd.to_datetime(df_ciclo_total["data"]).dt.weekday != 6
+    return int(math.ceil(valor))
+
+def atualizar_kpi(df):
+
+    global produtos_portfolio
+
+    if len(produtos_portfolio) == 0:
+        produtos_portfolio = []
+
+    df_port = df[
+        df["Produto"].isin(produtos_portfolio)
     ]
 
-    # Agrupar por dia
-    vendas_por_dia = (
-        df_ciclo_total.groupby("data")["valor_total"]
-        .sum()
-        .reset_index()
-        .sort_values("data")
+    # =========================
+    # PORTFOLIO
+    # =========================
+
+    ruptura_port = len(
+        df_port[df_port["Estoque"] <= 0]
     )
 
-    # =====================================================
-    # 🔥 COLUNAS AUXILIARES (ORDEM CORRETA)
-    # =====================================================
-
-    # Semana do ciclo
-    vendas_por_dia["semana"] = (
-        (pd.to_datetime(vendas_por_dia["data"]) - pd.to_datetime(inicio_ciclo))
-        .dt.days // 7
+    iminente_port = len(
+        df_port[
+            (df_port["Cobertura_Meses"] < 1) &
+            (df_port["Estoque"] > 0)
+        ]
     )
 
-    # Nome do dia
-    vendas_por_dia["dia_semana_nome"] = pd.to_datetime(
-        vendas_por_dia["data"]
-    ).dt.strftime("%a")
+    atencao_port = len(
+        df_port[
+            (df_port["Cobertura_Meses"] >= 1) &
+            (df_port["Cobertura_Meses"] < 2)
+        ]
+    )
 
-    mapa_dias = {
-        "Mon": "Seg",
-        "Tue": "Ter",
-        "Wed": "Qua",
-        "Thu": "Qui",
-        "Fri": "Sex",
-        "Sat": "Sáb"
+    excesso_port = len(
+        df_port[
+            df_port["Estoque"] >
+            (df_port["Media_3_Meses"] * 2)
+        ]
+    )
+
+    label_kpi_ruptura_port.config(
+        text=f"🔴 Ruptura Portfólio ({ruptura_port})"
+    )
+
+    label_kpi_iminente_port.config(
+        text=f"🟠 Iminente Portfólio ({iminente_port})"
+    )
+
+    label_kpi_atencao_port.config(
+        text=f"🟡 Atenção Portfólio ({atencao_port})"
+    )
+
+    label_kpi_excesso_port.config(
+        text=f"🔵 Excesso Portfólio ({excesso_port})"
+    )
+
+    # =========================
+    # FINANCEIRO
+    # =========================
+
+    impacto = df["Valor_Compra"].sum()
+
+    label_kpi_financeiro.config(
+        text=f"💰 Impacto: {formatar_moeda(impacto)}"
+    )
+
+    
+def atualizar_filtro_fornecedor():
+
+    global lista_fornecedores
+
+    lista_fornecedores = sorted(
+        df["Fornecedor  Fantasia"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .unique()
+    )
+
+    filtro_fornecedor["values"] = ["Todos"] + lista_fornecedores
+    filtro_fornecedor.set("Todos")
+
+def filtrar_fornecedor(event):
+
+    texto = filtro_fornecedor.get().lower()
+
+    lista = [
+        fornecedor for fornecedor in lista_fornecedores
+        if texto in fornecedor.lower()
+    ]
+
+    filtro_fornecedor["values"] = ["Todos"] + lista
+
+def filtrar_ruptura_port(event=None):
+
+    filtrado = df[
+        (df["Estoque"] <= 0) &
+        (df["Produto"].isin(produtos_portfolio))
+    ]
+
+    atualizar_tabela(filtrado)
+
+
+def filtrar_iminente_port(event=None):
+
+    filtrado = df[
+        (df["Cobertura_Meses"] < 1) &
+        (df["Estoque"] > 0) &
+        (df["Produto"].isin(produtos_portfolio))
+    ]
+
+    atualizar_tabela(filtrado)
+
+
+def filtrar_atencao_port(event=None):
+
+    filtrado = df[
+        (df["Cobertura_Meses"] >= 1) &
+        (df["Cobertura_Meses"] < 2) &
+        (df["Produto"].isin(produtos_portfolio))
+    ]
+
+    atualizar_tabela(filtrado)
+
+
+def filtrar_excesso_port(event=None):
+
+    filtrado = df[
+        (df["Estoque"] > df["Media_3_Meses"] * 2) &
+        (df["Produto"].isin(produtos_portfolio))
+    ]
+
+    atualizar_tabela(filtrado)
+
+def selecionar_compra():
+
+    for item in tabela.get_children():
+
+        valores = list(tabela.item(item, "values"))
+
+        try:
+            sugestao = int(valores[7])
+        except:
+            sugestao = 0
+
+        if sugestao > 0:
+            valores[0] = "☑"
+        else:
+            valores[0] = "☐"
+
+        tabela.item(item, values=valores)
+
+def formatar_cobertura(meses):
+
+    if meses <= 0:
+        return "0 dias"
+
+    dias_total = int(meses * 26)
+
+    meses_int = dias_total // 26
+    dias = dias_total % 26
+
+    if meses_int == 0:
+        return f"{dias} dias"
+
+    if dias == 0:
+        if meses_int == 1:
+            return "1 mês"
+        return f"{meses_int} meses"
+
+    if meses_int == 1:
+        return f"1 mês e {dias} dias"
+
+    return f"{meses_int} meses e {dias} dias"
+
+
+def calcular_previsao(caminho_arquivo):
+
+    df = pd.read_excel(caminho_arquivo, skiprows=3)
+
+    df.columns = df.columns.str.strip()
+    df = df.loc[:, ~df.columns.duplicated()]
+    df = df.copy()
+
+    
+
+    # =========================
+    # CARREGAR CUSTO
+    # =========================
+
+    df_custo = carregar_custo()
+    
+
+    if df_custo is not None:
+
+        df["Produto"] = df["Produto"].astype(str).str.strip()
+        df_custo["Descricao Produto"] = df_custo["Descricao Produto"].astype(str).str.strip()
+        df["Fornecedor  Fantasia"] = df["Fornecedor  Fantasia"].astype(str).str.strip()
+
+        df_custo = df_custo.drop_duplicates(subset="Descricao Produto")
+
+        df = df.merge(
+            df_custo[
+                ["Descricao Produto", "Preco Custo"]
+            ],
+            left_on="Produto",
+            right_on="Descricao Produto",
+            how="left"
+        )
+
+        df.drop(columns=["Descricao Produto"], inplace=True)
+
+    # =========================
+    # AJUSTAR NOMES DAS COLUNAS
+    # =========================
+
+    mapa_meses = {
+        "Jan":"Jan","Fev":"Fev","Mar":"Mar","Abr":"Abr",
+        "Mai":"Mai","Jun":"Jun","Jul":"Jul","Ago":"Ago",
+        "Set":"Set","Out":"Out","Nov":"Nov","Dez":"Dez"
     }
 
-    vendas_por_dia["dia_semana_nome"] = vendas_por_dia["dia_semana_nome"].map(mapa_dias)
+    novas_colunas = {}
 
-    # Média
-    media = vendas_por_dia["valor_total"].mean()
+    for col in df.columns:
+        if "Qtde" in col:
+            mes = col[:3]
+            if mes in mapa_meses:
+                novas_colunas[col] = mapa_meses[mes]
 
-    # =====================================================
-    # 📊 GRÁFICO
-    # =====================================================
+    df = df.rename(columns=novas_colunas)
+    df = df.fillna(0)
 
-    import plotly.express as px
+    meses = ["Jan","Fev","Mar","Abr","Mai","Jun",
+             "Jul","Ago","Set","Out","Nov","Dez"]
 
-    fig_linha = px.line(
-        vendas_por_dia,
-        x="data",
-        y="valor_total",
-        markers=True
+    mes_atual = datetime.now().month - 1
+
+    mes1 = meses[(mes_atual-3) % 12]
+    mes2 = meses[(mes_atual-2) % 12]
+    mes3 = meses[(mes_atual-1) % 12]
+
+    sugestoes = []
+    medias = []
+
+    for _, row in df.iterrows():
+
+        def pegar_valor(row, coluna):
+            valor = row[coluna] if coluna in df.columns else 0
+
+            if isinstance(valor, pd.Series):
+                valor = valor.iloc[0]
+
+            valor = pd.to_numeric(valor, errors="coerce")
+
+            return 0 if pd.isna(valor) else valor
+
+
+        v1 = pegar_valor(row, mes1)
+        v2 = pegar_valor(row, mes2)
+        v3 = pegar_valor(row, mes3)
+
+        media = (v1 + v2 + v3) / 3
+        medias.append(arredondar(media))
+
+        if v1 == 0:
+            tendencia = 0
+        else:
+            tendencia = (v3 - v1) / v1
+
+        tendencia = max(min(tendencia, 0.20), -0.20)
+
+        # previsão usando média + tendência
+        previsao = media * (1 + tendencia)
+
+        # cobertura desejada = 45 dias
+        fator_cobertura = cobertura_dias.get() / 26
+
+        # compra planejada para 45 dias
+        compra_planejada = previsao * fator_cobertura
+
+        estoque_atual = row.get("Estoque",0)
+
+        sugestao = max(compra_planejada - estoque_atual, 0)
+
+        sugestoes.append(arredondar(sugestao))
+
+    df["Media_3_Meses"] = medias
+    df["Sugestao_Compra"] = sugestoes
+
+    df["Cobertura_Meses"] = df.apply(
+        lambda x: x["Estoque"] / x["Media_3_Meses"]
+        if x["Media_3_Meses"] > 0 else 0,
+        axis=1
     )
 
-    # =====================================================
-    # 🎨 FUNDO POR SEMANA
-    # =====================================================
+    df = df.sort_values(by="Media_3_Meses", ascending=False)
+    df["Ranking"] = range(1, len(df)+1)
 
-    semanas = vendas_por_dia["semana"].unique()
+    df["Valor_Compra"] = (
+        df["Sugestao_Compra"] *
+        df["Preco Custo"]
+    ).fillna(0)
 
-    for i, semana in enumerate(semanas):
-        dados_semana = vendas_por_dia[vendas_por_dia["semana"] == semana]
+    df["Valor_Compra"] = df["Valor_Compra"].round(2)
 
-        fig_linha.add_vrect(
-            x0=dados_semana["data"].min(),
-            x1=dados_semana["data"].max(),
-            fillcolor="lightgrey" if i % 2 == 0 else "white",
-            opacity=0.2,
-            layer="below",
-            line_width=0,
-        )
+    # =========================
+    # CURVA ABC
+    # =========================
 
-    # =====================================================
-    # 📈 LINHA DA MÉDIA (UMA SÓ)
-    # =====================================================
+    df["Venda_Anual"] = df[meses].sum(axis=1)
 
-    fig_linha.add_hline(
-        y=media,
-        line_dash="dash",
-        line_color="green",
-        annotation_text="Média diária",
-        annotation_position="top left"
-    )
+    df = df.sort_values(by="Venda_Anual", ascending=False)
 
-    # =====================================================
-    # 🎯 TOOLTIP FORMATADO
-    # =====================================================
+    total_venda = df["Venda_Anual"].sum()
 
-    fig_linha.update_traces(
-        customdata=vendas_por_dia["dia_semana_nome"],
-        hovertemplate="Data: %{x}<br>Dia: %{customdata}<br>Vendas: R$ %{y:,.2f}<extra></extra>"
-    )
+    if total_venda == 0:
+        df["Perc_Venda"] = 0
+    else:
+        df["Perc_Venda"] = df["Venda_Anual"] / total_venda
 
-    # =====================================================
-    # 🧭 EIXO X COM DIA + DATA
-    # =====================================================
+    df["Perc_Acumulado"] = df["Perc_Venda"].cumsum()
 
-    fig_linha.update_layout(
-        xaxis=dict(
-            tickmode='array',
-            tickvals=vendas_por_dia["data"],
-            ticktext=[
-                f"{d.strftime('%d/%m')} ({ds})"
-                for d, ds in zip(
-                    pd.to_datetime(vendas_por_dia["data"]),
-                    vendas_por_dia["dia_semana_nome"]
-                )
-            ]
-        ),
-        xaxis_title="Data",
-        yaxis_title="Valor Vendido"
-    )
+    def classificar_abc(p):
 
-    st.plotly_chart(fig_linha, use_container_width=True)
+        if p <= 0.80:
+            return "A"
+        elif p <= 0.95:
+            return "B"
+        else:
+            return "C"
 
-    
-    # =====================================================
-    # 📊  (GRÁFICO)
-    # =====================================================
+    df["Curva_ABC"] = df["Perc_Acumulado"].apply(classificar_abc)
 
-    ranking = (
-        df_dia.groupby("vendedor")["valor_total"]
-        .sum()
-        .reset_index()
-        .sort_values("valor_total", ascending=False)
-    )
+    df["Família"] = df["Família"].astype(str).str.strip()
 
-    st.markdown("### 📊 Vendas por Vendedor")
-
-    if not ranking.empty:
-        fig_vendedores = px.bar(
-            ranking,
-            x="vendedor",
-            y="valor_total",
-            text="valor_total"
-        )
-
-        fig_vendedores.update_traces(
-            texttemplate="R$ %{y:,.2f}",
-            hovertemplate="<b>%{x}</b><br>Vendas: R$ %{y:,.2f}<extra></extra>"
-        )
-
-        fig_vendedores.update_layout(
-            xaxis_title="Vendedor",
-            yaxis_title="Valor Vendido",
-        )
-
-        st.plotly_chart(fig_vendedores, use_container_width=True)
-    
-    
-
-    # =====================================================
-    # 📊 PRODUTOS (GRÁFICO POR VALOR)
-    # =====================================================
-
-    produtos = (
-        df_dia.groupby("produto")["valor_total"]
-        .sum()
-        .reset_index()
-        .sort_values("valor_total", ascending=False)
-    )
-
-    st.markdown("### 📊 Vendas por Produto")
-
-    if not produtos.empty:
-        fig_produtos = px.bar(
-            produtos.head(10),  # top 10
-            x="produto",
-            y="valor_total",
-            text="valor_total"
-        )
-
-        fig_produtos.update_traces(
-            texttemplate="R$ %{y:,.2f}",
-            hovertemplate="<b>%{x}</b><br>Vendas: R$ %{y:,.2f}<extra></extra>"
-        )
-
-        fig_produtos.update_layout(
-            xaxis_title="Produto",
-            yaxis_title="Valor Vendido",
-        )
-
-        st.plotly_chart(fig_produtos, use_container_width=True)
-
-# =====================================================
-# ORÇAMENTOS EM ABERTO (INALTERADO)
-# =====================================================
-elif tipo_dashboard == "Orçamentos em Aberto":
-    st.title("📋 Orçamentos em Aberto – Visão Semanal")
-
-    df_orc = pd.read_excel("orcamentos_abertos.xlsx")
-    df_orc = df_orc.rename(columns={
-        "Dt  Emissão": "data",
-        "Vendedor": "vendedor",
-        "Vl  Pedido": "valor_orcado"
-    })
-    df_orc.columns = [c.lower().strip() for c in df_orc.columns]
-
-    df_orc["data"] = pd.to_datetime(df_orc["data"], errors="coerce").dt.date
-    df_orc = df_orc.dropna(subset=["data"])
-    df_orc["valor_orcado"] = df_orc["valor_orcado"].astype(float)
-
-    # =====================================================
-    # CONTROLE DE VENDEDORES RESTRITOS
-    # =====================================================
-
-    VENDEDORES_RESTRITOS = ["LIMA", "EDUARDO"]
-
-    # Padronizar vendedor
-    df_orc["vendedor"] = (
-        df_orc["vendedor"]
+    df["Produto"] = (
+        df["Produto"]
         .astype(str)
         .str.strip()
         .str.upper()
     )
-
-    # Base exclusiva admin (LIMA + EDUARDO)
-    df_orc_restritos = df_orc[
-        df_orc["vendedor"].isin(VENDEDORES_RESTRITOS)
-    ].copy()
-
-    # Usuário comum não vê esses vendedores
-    if perfil != "admin":
-        df_orc = df_orc[
-            ~df_orc["vendedor"].isin(VENDEDORES_RESTRITOS)
-        ]
-
-    # KPIs nunca somam LIMA + EDUARDO
-    df_orc_kpi = df_orc[
-        ~df_orc["vendedor"].isin(VENDEDORES_RESTRITOS)
-    ].copy()
-
-    df_orc["vendedor"] = df_orc["vendedor"].astype(str).str.strip().str.upper()
-
-    df_orc_lima = df_orc[df_orc["vendedor"] == "LIMA"]
-    df_orc_sem_lima = df_orc[df_orc["vendedor"] != "LIMA"]
-
-    if perfil != "admin":
-        df_orc = df_orc_sem_lima.copy()
-
-    # --------------------------
-    # TOTAIS
-    # --------------------------
-
-    
-    total_geral_orcamentos = df_orc_kpi["valor_orcado"].sum()
-
     
 
-    datas_disponiveis = sorted(df_orc["data"].unique())
-    hoje = datetime.today().date()
+    return df
 
-    if hoje in datas_disponiveis:
-        indice_padrao = datas_disponiveis.index(hoje)
-    else:
-        indice_padrao = len(datas_disponiveis) - 1
+def recalcular_previsao():
 
-    dia_sel = st.selectbox(
-        "Selecione o dia",
-        datas_disponiveis,
-        index=indice_padrao
-    )
+    global df
+    global caminho_base
 
-    df_dia_total = df_orc[df_orc["data"] == dia_sel]
-    df_dia_kpi = df_orc_kpi[
-        df_orc_kpi["data"] == dia_sel
-    ]
+    if caminho_base is None:
+        return
 
-    total_dia_orcamentos = df_dia_kpi["valor_orcado"].sum()
+    df = calcular_previsao(caminho_base)
 
-    k1, k2 = st.columns(2)
-    k1.metric("💰 Total Geral de Orçamentos", formato_real(total_geral_orcamentos))
-    k2.metric("📅 Total do Dia", formato_real(total_dia_orcamentos))
+    atualizar_tabela(df)
 
-    # --------------------------
-    # VISÃO DIÁRIA POR VENDEDOR
-    # --------------------------
-    titulo_dia = pd.to_datetime(dia_sel).strftime("%A").capitalize()
-    st.subheader(f"🗓️ {titulo_dia} ({formato_data_br(dia_sel)})")
 
-    calendario = (
-        df_dia_total.groupby("vendedor")["valor_orcado"]
-        .sum()
-        .reset_index()
-    )
+def atualizar_tabela(dados):
 
-    calendario["valor_orcado"] = calendario["valor_orcado"].apply(formato_real)
+    for item in tabela.get_children():
+        tabela.delete(item)
 
-    st.dataframe(calendario, use_container_width=True)
-    
-    
+    for i, row in dados.iterrows():
 
+        if row["Estoque"] <= 0:
+            tag = "ruptura"
+
+        elif row["Cobertura_Meses"] < 1:
+            tag = "ruptura_iminente"
+
+        elif row["Cobertura_Meses"] < 2:
+            tag = "atencao"
+
+        elif row["Estoque"] > row["Media_3_Meses"] * 2:
+            tag = "excesso"
+
+        else:
+            tag = "normal"
+
+        tabela.insert(
+            "",
+            "end",
+            values=(
+                "☐",
+                row["Ranking"],
+                row["Código"],
+                row["Produto"],
+                row["Media_3_Meses"],
+                row["Estoque"],
+                formatar_cobertura(row["Cobertura_Meses"]),
+                row["Sugestao_Compra"],
+                formatar_moeda(row["Valor_Compra"]),
+                row["Curva_ABC"]
+            ),
+            tags=(tag,)
+        )
         
 
+
+def toggle_checkbox(event):
+
+    item = tabela.identify_row(event.y)
+    coluna = tabela.identify_column(event.x)
+
+    if coluna != "#1":
+        return
+
+    valores = list(tabela.item(item,"values"))
+
+    valores[0] = "☑" if valores[0] == "☐" else "☐"
+
+    tabela.item(item,values=valores)
+
+    calcular_impacto_selecionado()
+
+
+def pesquisar(event=None):
+
+    texto = campo_pesquisa.get().lower()
+
+    df_filtrado = df[
+        df["Produto"]
+        .astype(str)
+        .str.lower()
+        .str.contains(texto, na=False)
+    ]
+
+    filtro = filtro_situacao.get()
+
+    if filtro == "Ruptura":
+        df_filtrado = df_filtrado[df_filtrado["Estoque"] <= 0]
+
+    elif filtro == "Ruptura Iminente":
+        df_filtrado = df_filtrado[
+            (df_filtrado["Cobertura_Meses"] < 1) &
+            (df_filtrado["Estoque"] > 0)
+        ]
+
+    elif filtro == "Atenção":
+        df_filtrado = df_filtrado[
+            (df_filtrado["Cobertura_Meses"] >= 1) &
+            (df_filtrado["Cobertura_Meses"] < 2)
+        ]
+
+    elif filtro == "Excesso":
+        df_filtrado = df_filtrado[
+            df_filtrado["Estoque"] >
+            (df_filtrado["Media_3_Meses"] * 2)
+        ]
+
+    atualizar_tabela(df_filtrado)
+
+def aplicar_filtro():
+
+    filtro = filtro_situacao.get()
+    familia = filtro_familia.get()
+    fornecedor = filtro_fornecedor.get()
+
+    df_filtrado = df.copy()
+
+    # Situação
+    if filtro == "Ruptura":
+        df_filtrado = df_filtrado[df_filtrado["Estoque"] <= 0]
+
+    elif filtro == "Ruptura Iminente":
+        df_filtrado = df_filtrado[
+            (df_filtrado["Cobertura_Meses"] < 1) &
+            (df_filtrado["Estoque"] > 0)
+        ]
+
+    elif filtro == "Atenção":
+        df_filtrado = df_filtrado[
+            (df_filtrado["Cobertura_Meses"] >= 1) &
+            (df_filtrado["Cobertura_Meses"] < 2)
+        ]
+
+    elif filtro == "Excesso":
+        df_filtrado = df_filtrado[
+            df_filtrado["Estoque"] >
+            (df_filtrado["Media_3_Meses"] * 2)
+        ]
+
+    # Família
+    if familia != "Todas":
+        df_filtrado = df_filtrado[
+            df_filtrado["Família"] == familia
+        ]
+
+    # Fornecedor
+    if fornecedor != "Todos":
+        df_filtrado = df_filtrado[
+            df_filtrado["Fornecedor  Fantasia"] == fornecedor
+        ]
+
+    atualizar_tabela(df_filtrado)
+
+
+def mostrar_grafico(event):
+
+    item = tabela.selection()
+
+    if not item:
+        return
+
+    produto = tabela.item(item)["values"][3]
+
+    dados = df[df["Produto"] == produto].iloc[0]
+
+    meses = ["Jan","Fev","Mar","Abr","Mai","Jun",
+             "Jul","Ago","Set","Out","Nov","Dez"]
+
+    vendas = [dados.get(m,0) for m in meses]
+
+    fig = Figure(figsize=(5,3))
+    ax = fig.add_subplot(111)
+
+    ax.plot(meses, vendas, marker="o")
+    ax.set_title(produto)
+    ax.set_ylabel("Vendas")
+
+    for widget in frame_grafico.winfo_children():
+        widget.destroy()
+
+    canvas = FigureCanvasTkAgg(fig, master=frame_grafico)
+    canvas.draw()
+    canvas.get_tk_widget().pack()
+
+
+def gerar_pedido():
+
+    produtos = []
+
+    for item in tabela.get_children():
+
+        valores = tabela.item(item)["values"]
+
+        if valores[0] == "☑":
+
+            produtos.append({
+                "Produto": valores[3],
+                "Estoque": valores[5],
+                "Media_3_Meses": valores[4],
+                "Sugestao_Compra": valores[7],
+                "Cobertura" : valores[6],
+                "Valor_Compra": valores[8],
+                "Curva_ABC": valores[9]
+            })
+
+    if not produtos:
+        return
+
+    pedido_df = pd.DataFrame(produtos)
+
+    caminho = filedialog.asksaveasfilename(
+        defaultextension=".xlsx",
+        filetypes=[("Excel files","*.xlsx")]
+    )
+
+    if caminho:
+        pedido_df.to_excel(caminho,index=False)
+    
+
+def calcular_impacto_selecionado():
+
+    total = 0
+
+    for item in tabela.get_children():
+
+        valores = tabela.item(item)["values"]
+
+        if valores[0] == "☑":
+
+            valor = valores[7]
+
+            if isinstance(valor, str):
+                valor = valor.replace("R$", "").replace(".", "").replace(",", ".")
+                valor = float(valor)
+
+            total += float(valor)
+
+    label_impacto_selecionado.config(
+        text=f"💰 Impacto Selecionados: {formatar_moeda(total)}"
+    )
+def selecionar_todos():
+
+    for item in tabela.get_children():
+
+        valores = list(tabela.item(item, "values"))
+
+        valores[0] = "☑"
+
+        tabela.item(item, values=valores)
+
+def desmarcar_todos():
+
+    for item in tabela.get_children():
+
+        valores = list(tabela.item(item, "values"))
+
+        valores[0] = "☐"
+
+        tabela.item(item, values=valores)
+
+
+# =========================
+# INTERFACE
+# =========================
+
+janela = tk.Tk()
+cobertura_dias = tk.IntVar(value=45)
+janela.title("Sistema Inteligente de Planejamento de Compras")
+janela.geometry("1200x700")
+janela.configure(bg="#f4f6f9")
+
+
+
+
+titulo = tk.Label(
+    janela,
+    text="Sistema Inteligente de Planejamento de Compras",
+    font=("Arial",20,"bold"),
+    bg="#f4f6f9"
+)
+
+titulo.pack(pady=10)
+# =========================
+# KPI ALERTAS AVANÇADO
+# =========================
+
+frame_kpi = tk.Frame(janela, bg="#f4f6f9")
+frame_kpi.pack(pady=5)
+
+
+botao_pedido = tk.Button(
+    janela,
+    text="Gerar Pedido de Compra",
+    font=("Arial",12,"bold"),
+    bg="#2196F3",
+    fg="white",
+    padx=25,
+    pady=8,
+    command=gerar_pedido
+)
+
+
+
+label_impacto_selecionado = tk.Label(
+    janela,
+    text="💰 Impacto Selecionados: R$ 0,00",
+    font=("Arial",12,"bold"),
+    fg="#2e7d32",
+    bg="#f4f6f9"
+)
+
+label_impacto_selecionado.pack(pady=5)
+
+botao_pedido.pack(pady=5)
+
+label_kpi_financeiro = tk.Label(
+    frame_kpi,
+    text="💰 Impacto Financeiro",
+    font=("Arial",12,"bold"),
+    fg="#2e7d32",
+    bg="#f4f6f9"
+)
+
+label_kpi_financeiro.pack(side="left", padx=15)
+
+# =========================
+# KPI PORTFOLIO
+# =========================
+
+frame_kpi_port = tk.Frame(janela, bg="#f4f6f9")
+frame_kpi_port.pack(pady=3)
+
+label_kpi_ruptura_port = tk.Label(
+    frame_kpi_port,
+    text="🔴 Ruptura Portfólio",
+    font=("Arial",11,"bold"),
+    fg="red",
+    cursor="hand2",
+    bg="#f4f6f9"
+)
+
+label_kpi_ruptura_port.pack(side="left", padx=8)
+label_kpi_ruptura_port.bind("<Button-1>", filtrar_ruptura_port)
+
+
+label_kpi_iminente_port = tk.Label(
+    frame_kpi_port,
+    text="🟠 Iminente Portfólio",
+    font=("Arial",11,"bold"),
+    fg="#ff8c00",
+    cursor="hand2",
+    bg="#f4f6f9"
+)
+
+label_kpi_iminente_port.pack(side="left", padx=8)
+label_kpi_iminente_port.bind("<Button-1>", filtrar_iminente_port)
+
+
+label_kpi_atencao_port = tk.Label(
+    frame_kpi_port,
+    text="🟡 Atenção Portfólio",
+    font=("Arial",11,"bold"),
+    fg="#b8860b",
+    cursor="hand2",
+    bg="#f4f6f9"
+)
+
+label_kpi_atencao_port.pack(side="left", padx=8)
+label_kpi_atencao_port.bind("<Button-1>", filtrar_atencao_port)
+
+
+label_kpi_excesso_port = tk.Label(
+    frame_kpi_port,
+    text="🔵 Excesso Portfólio",
+    font=("Arial",11,"bold"),
+    fg="#1e90ff",
+    cursor="hand2",
+    bg="#f4f6f9"
+)
+
+label_kpi_excesso_port.pack(side="left", padx=8)
+label_kpi_excesso_port.bind("<Button-1>", filtrar_excesso_port)
+
+frame_selecao = tk.Frame(janela, bg="#f4f6f9")
+frame_selecao.pack(pady=5)
+
+btn_sel_todos = tk.Button(
+    frame_selecao,
+    text="Selecionar Todos (Filtrados)",
+    font=("Arial",10,"bold"),
+    bg="#4CAF50",
+    fg="white",
+    command=selecionar_todos
+)
+
+btn_sel_todos.pack(side="left", padx=5)
+
+btn_sel_compra = tk.Button(
+    frame_selecao,
+    text="Selecionar Sugestão > 0",
+    font=("Arial",10,"bold"),
+    bg="#ff9800",
+    fg="white",
+    command=selecionar_compra
+)
+
+btn_sel_compra.pack(side="left", padx=5)
+
+
+btn_desmarcar = tk.Button(
+    frame_selecao,
+    text="Desmarcar Todos",
+    font=("Arial",10,"bold"),
+    bg="#f44336",
+    fg="white",
+    command=desmarcar_todos
+)
+
+btn_desmarcar.pack(side="left", padx=5)
+
+
+# =========================
+# PESQUISA
+# =========================
+
+frame_pesquisa = tk.Frame(janela,bg="#f4f6f9")
+frame_pesquisa.pack(pady=10)
+
+tk.Label(
+    frame_pesquisa,
+    text="Pesquisar Produto:",
+    font=("Arial",12),
+    bg="#f4f6f9"
+).pack(side="left")
+
+campo_pesquisa = tk.Entry(frame_pesquisa,font=("Arial",12),width=30)
+campo_pesquisa.pack(side="left",padx=10)
+
+campo_pesquisa.bind("<KeyRelease>", pesquisar)
+
+frame_cobertura = tk.Frame(janela, bg="#f4f6f9")
+frame_cobertura.pack(pady=5)
+
+tk.Label(
+    frame_cobertura,
+    text="Cobertura:",
+    font=("Arial",11,"bold"),
+    bg="#f4f6f9"
+).pack(side="left", padx=5)
+
+combo_cobertura = ttk.Combobox(
+    frame_cobertura,
+    textvariable=cobertura_dias,
+    values=[30,45,60,90],
+    width=10,
+    state="readonly"
+)
+
+combo_cobertura.pack(side="left")
+combo_cobertura.bind(
+    "<<ComboboxSelected>>",
+    lambda e: recalcular_previsao()
+)
+
+tk.Label(
+    frame_cobertura,
+    text="dias",
+    font=("Arial",11),
+    bg="#f4f6f9"
+).pack(side="left", padx=5)
+
+# =========================
+# FILTROS
+# =========================
+
+frame_filtros = tk.Frame(janela, bg="#f4f6f9")
+frame_filtros.pack(pady=5)
+
+tk.Label(
+    frame_filtros,
+    text="Filtro Situação:",
+    font=("Arial",11),
+    bg="#f4f6f9"
+).pack(side="left", padx=5)
+
+filtro_situacao = ttk.Combobox(
+    frame_filtros,
+    values=[
+        "Todos",
+        "Ruptura",
+        "Ruptura Iminente",
+        "Atenção",
+        "Excesso"
+    ],
+    state="readonly",
+    width=18
+)
+
+tk.Label(
+    frame_filtros,
+    text="Família:",
+    font=("Arial",11),
+    bg="#f4f6f9"
+).pack(side="left", padx=5)
+
+filtro_familia = ttk.Combobox(
+    frame_filtros,
+    state="readonly",
+    width=25
+)
+
+filtro_familia.set("Todas")
+filtro_familia.pack(side="left", padx=5)
+
+filtro_familia.bind(
+    "<<ComboboxSelected>>",
+    lambda e: aplicar_filtro()
+)
+
+tk.Label(
+    frame_filtros,
+    text="Fornecedor:",
+    font=("Arial",11),
+    bg="#f4f6f9"
+).pack(side="left", padx=5)
+
+
+filtro_fornecedor = ttk.Combobox(
+    frame_filtros,
+    state="normal",
+    width=30
+)
+
+filtro_fornecedor.set("Todos")
+filtro_fornecedor.pack(side="left", padx=5)
+filtro_fornecedor.bind("<KeyRelease>", filtrar_fornecedor)
+
+filtro_fornecedor.bind(
+    "<<ComboboxSelected>>",
+    lambda e: aplicar_filtro()
+)
+
+filtro_situacao.set("Todos")
+filtro_situacao.pack(side="left", padx=5)
+
+filtro_situacao.bind("<<ComboboxSelected>>", lambda e: aplicar_filtro())
+
+# =========================
+# TABELA
+# =========================
+
+frame_tabela = tk.Frame(janela)
+frame_tabela.pack(fill="both",expand=True,padx=20,pady=10)
+
+colunas = (
+"Sel",
+"Ranking",
+"Código",
+"Produto",
+"Média 3 Meses",
+"Estoque",
+"Cobertura",
+"Sugestão compra",
+"Valor Compra",
+"Curva ABC"
+)
+
+scroll = ttk.Scrollbar(frame_tabela)
+scroll.pack(side="right",fill="y")
+
+tabela = ttk.Treeview(
+    frame_tabela,
+    columns=colunas,
+    show="headings",
+    yscrollcommand=scroll.set
+)
+
+scroll.config(command=tabela.yview)
+
+for col in colunas:
+
+    tabela.heading(col,text=col)
+
+    if col == "Sel":
+        tabela.column(col,width=60,anchor="center")
+
+    elif col == "Código":
+        tabela.column(col,width=100,anchor="center")
+
+    elif col == "Produto":
+        tabela.column(col,width=320,anchor="w")
+
+    else:
+        tabela.column(col,width=130,anchor="center")
+
+tabela.pack(fill="both",expand=True)
+
+tabela.bind("<<TreeviewSelect>>", mostrar_grafico)
+tabela.bind("<Button-1>", toggle_checkbox)
+
+
+# =========================
+# GRAFICO
+# =========================
+
+frame_grafico = tk.Frame(janela,bg="#f4f6f9")
+frame_grafico.pack(fill="x",padx=20,pady=10)
+
+
+# =========================
+# ESTILO
+# =========================
+
+tabela.tag_configure("ruptura", background="#ff4d4d")
+tabela.tag_configure("ruptura_iminente", background="#ffb3b3")
+tabela.tag_configure("atencao", background="#fff3cd")
+tabela.tag_configure("excesso", background="#cce5ff")
+tabela.tag_configure("normal", background="white")
+
+style = ttk.Style()
+style.configure("Treeview",font=("Arial",11),rowheight=28)
+style.configure("Treeview.Heading",font=("Arial",12,"bold"))
+
+carregar_automatico()
+
+janela.mainloop()
