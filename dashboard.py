@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from datetime import timedelta
+from datetime import date
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
@@ -12,11 +13,206 @@ import re
 # =====================================================
 st.set_page_config(page_title="Dashboard de Vendas", layout="wide")
 
-
 # =====================================================
 # CONSTANTES
 # =====================================================
 META_MENSAL = 2_400_000.00
+
+
+# =====================================================
+# CALENDÁRIO DE DIAS ÚTEIS - CICLO DE COMISSIONAMENTO
+# =====================================================
+# O ciclo de comissão vai sempre do dia 26 de um mês
+# até o dia 25 do mês seguinte.
+#
+# Feriados considerados:
+# - Feriados nacionais do Brasil
+# - Feriados estaduais de São Paulo aplicáveis ao período
+#
+# A lista pode ser ampliada futuramente sem alterar a
+# lógica da projeção.
+
+FERIADOS_FIXOS = {
+    # Feriados nacionais
+    (1, 1),    # Confraternização Universal
+    (4, 21),   # Tiradentes
+    (5, 1),    # Dia do Trabalho
+    (9, 7),    # Independência do Brasil
+    (10, 12),  # Nossa Senhora Aparecida
+    (11, 2),   # Finados
+    (11, 15),  # Proclamação da República
+    (12, 25),  # Natal
+
+    # Feriado estadual de São Paulo
+    (7, 9),    # Revolução Constitucionalista
+}
+
+# Feriados móveis conhecidos para os anos utilizados.
+# Inclui Carnaval e Corpus Christi, conforme calendário
+# normalmente utilizado para expediente da empresa.
+FERIADOS_MOVEIS = {
+    2025: {
+        date(2025, 3, 3),   # Carnaval
+        date(2025, 3, 4),   # Carnaval
+        date(2025, 4, 18),  # Sexta-feira Santa
+        date(2025, 6, 19),  # Corpus Christi
+    },
+    2026: {
+        date(2026, 2, 16),  # Carnaval
+        date(2026, 2, 17),  # Carnaval
+        date(2026, 4, 3),   # Sexta-feira Santa
+        date(2026, 6, 4),   # Corpus Christi
+    },
+    2027: {
+        date(2027, 2, 8),   # Carnaval
+        date(2027, 2, 9),   # Carnaval
+        date(2027, 3, 26),  # Sexta-feira Santa
+        date(2027, 5, 27),  # Corpus Christi
+    },
+}
+
+def eh_feriado(data):
+    """Retorna True quando a data é feriado considerado pelo dashboard."""
+    data = pd.Timestamp(data).date()
+
+    if (data.month, data.day) in FERIADOS_FIXOS:
+        return True
+
+    return data in FERIADOS_MOVEIS.get(data.year, set())
+
+
+def eh_dia_util(data):
+    """Segunda a sexta-feira, excluindo feriados."""
+    data = pd.Timestamp(data)
+    return data.weekday() < 5 and not eh_feriado(data)
+
+
+def contar_dias_uteis(data_inicio, data_fim):
+    """Conta dias úteis entre as duas datas, inclusive."""
+    if data_fim < data_inicio:
+        return 0
+
+    datas = pd.date_range(data_inicio, data_fim)
+    return sum(eh_dia_util(d) for d in datas)
+
+
+def obter_ciclo_comissionamento(data_referencia):
+    """
+    Retorna início e fim do ciclo 26 -> 25.
+    Exemplo:
+        30/09/2026 -> 26/09/2026 até 25/10/2026
+        25/10/2026 -> 26/09/2026 até 25/10/2026
+        26/10/2026 -> 26/10/2026 até 25/11/2026
+    """
+    data_referencia = pd.Timestamp(data_referencia).date()
+
+    if data_referencia.day >= 26:
+        inicio = data_referencia.replace(day=26)
+        proximo_mes = (
+            pd.Timestamp(inicio) + pd.DateOffset(months=1)
+        ).date()
+        fim = proximo_mes.replace(day=25)
+    else:
+        primeiro_dia_mes = data_referencia.replace(day=1)
+        mes_anterior = (
+            pd.Timestamp(primeiro_dia_mes) - pd.DateOffset(months=1)
+        ).date()
+        inicio = mes_anterior.replace(day=26)
+        fim = data_referencia.replace(day=25)
+
+    return inicio, fim
+
+
+def calcular_projecao(df_base, coluna_valor="valor_total", data_referencia=None):
+    """
+    Calcula a projeção de faturamento usando uma única regra:
+
+        Média diária =
+            Venda acumulada até o último dia apurado
+            / quantidade de dias úteis já trabalhados
+
+        Projeção =
+            Média diária * quantidade total de dias úteis do ciclo
+
+    O último dia apurado é o último dia útil com dados disponível
+    até a data de referência. Dias úteis sem venda continuam contando
+    como dias trabalhados.
+    """
+    if data_referencia is None:
+        data_referencia = datetime.today().date()
+
+    data_referencia = pd.Timestamp(data_referencia).date()
+
+    inicio_ciclo, fim_ciclo = obter_ciclo_comissionamento(data_referencia)
+
+    # O cálculo deve considerar somente dias já encerrados.
+    # Se houver dados de hoje, eles ainda não entram na projeção.
+    ultimo_dia_apurado = min(
+        data_referencia - timedelta(days=1),
+        fim_ciclo
+    )
+
+    # Total de dias úteis de todo o ciclo.
+    total_dias_uteis = contar_dias_uteis(
+        inicio_ciclo,
+        fim_ciclo
+    )
+
+    # Quantidade de dias úteis já trabalhados até o último dia apurado.
+    if ultimo_dia_apurado >= inicio_ciclo:
+        dias_uteis_trabalhados = contar_dias_uteis(
+            inicio_ciclo,
+            ultimo_dia_apurado
+        )
+    else:
+        dias_uteis_trabalhados = 0
+
+    # Filtra vendas do ciclo até o último dia apurado.
+    base = df_base.copy()
+
+    if base.empty:
+        venda_acumulada = 0.0
+    else:
+        base["data"] = pd.to_datetime(
+            base["data"],
+            errors="coerce"
+        ).dt.date
+
+        base = base[
+            (base["data"] >= inicio_ciclo) &
+            (base["data"] <= ultimo_dia_apurado)
+        ]
+
+        # Sábado/domingo/feriado não podem gerar faturamento
+        # considerado na projeção.
+        if not base.empty:
+            base = base[
+                base["data"].apply(eh_dia_util)
+            ]
+
+        venda_acumulada = pd.to_numeric(
+            base[coluna_valor],
+            errors="coerce"
+        ).fillna(0).sum()
+
+    media_diaria = (
+        venda_acumulada / dias_uteis_trabalhados
+        if dias_uteis_trabalhados > 0
+        else 0.0
+    )
+
+    projecao = media_diaria * total_dias_uteis
+
+    return {
+        "inicio_ciclo": inicio_ciclo,
+        "fim_ciclo": fim_ciclo,
+        "ultimo_dia_apurado": ultimo_dia_apurado,
+        "venda_acumulada": venda_acumulada,
+        "dias_uteis_trabalhados": dias_uteis_trabalhados,
+        "total_dias_uteis": total_dias_uteis,
+        "media_diaria": media_diaria,
+        "projecao": projecao,
+    }
 
 # =====================================================
 # CONTROLE DE PERFIL
@@ -242,58 +438,66 @@ if tipo_dashboard == "Dashboard Mensal":
     # =====================================================
     # PROJEÇÃO DE FATURAMENTO (CICLO 26-25)
     # =====================================================
+    hoje = datetime.today().date()
 
-    hoje = pd.Timestamp.today().date()
+    # A projeção usa exatamente a mesma regra da projeção geral.
+    # Cada vendedor é calculado individualmente, mas os dias úteis
+    # são os mesmos para todos.
+    inicio_ciclo, fim_ciclo = obter_ciclo_comissionamento(hoje)
 
-    # Determinar início do ciclo
-    if hoje.day >= 26:
-        inicio_ciclo = hoje.replace(day=26)
-    else:
-        mes_anterior = (pd.Timestamp(hoje) - pd.DateOffset(months=1)).date()
-        inicio_ciclo = mes_anterior.replace(day=26)
+    # Último dia encerrado considerado na apuração.
+    ultimo_dia_apurado = min(
+        hoje - timedelta(days=1),
+        fim_ciclo
+    )
 
-    # Determinar fim do ciclo
-    if hoje.day >= 26:
-        proximo_mes = (pd.Timestamp(hoje) + pd.DateOffset(months=1)).date()
-        fim_ciclo = proximo_mes.replace(day=25)
-    else:
-        fim_ciclo = hoje.replace(day=25)
+    # Base do ciclo.
+    df_ciclo = df[
+        (pd.to_datetime(df["data"]).dt.date >= inicio_ciclo) &
+        (pd.to_datetime(df["data"]).dt.date <= ultimo_dia_apurado)
+    ].copy()
 
-    # Dados do ciclo
-    df_ciclo = df[(df["data"] >= inicio_ciclo) & (df["data"] < hoje)]
+    # Somente dias úteis geram venda para a projeção.
+    if not df_ciclo.empty:
+        df_ciclo = df_ciclo[
+            df_ciclo["data"].apply(eh_dia_util)
+        ]
 
-    # Remover domingos
-    df_ciclo = df_ciclo[pd.to_datetime(df_ciclo["data"]).dt.weekday != 6]
-
-    # vendas por vendedor no ciclo
+    # Vendas acumuladas por vendedor.
     vendas_ciclo = (
         df_ciclo.groupby("vendedor")["valor_total"]
         .sum()
         .reset_index()
+        .rename(columns={"valor_total": "valor_total_ciclo"})
     )
 
-    # juntar com tabela principal
     vendas_vendedor = vendas_vendedor.merge(
         vendas_ciclo,
         on="vendedor",
-        how="left",
-        suffixes=("", "_ciclo")
-    ).fillna(0)
+        how="left"
+    ).fillna({"valor_total_ciclo": 0})
 
-    # Dias trabalhados (sem domingo)
-    datas_passadas = pd.date_range(inicio_ciclo, hoje - pd.Timedelta(days=1))
-    dias_passados = len([d for d in datas_passadas if d.weekday() != 6])
+    # Dias úteis do ciclo e dias úteis já trabalhados.
+    total_dias_uteis = contar_dias_uteis(
+        inicio_ciclo,
+        fim_ciclo
+    )
 
-    # Total de dias do ciclo (sem domingo)
-    datas_total = pd.date_range(inicio_ciclo, fim_ciclo)
-    total_dias = len([d for d in datas_total if d.weekday() != 6])
+    dias_uteis_trabalhados = contar_dias_uteis(
+        inicio_ciclo,
+        ultimo_dia_apurado
+    ) if ultimo_dia_apurado >= inicio_ciclo else 0
 
-    # média diária
-    vendas_vendedor["media_diaria"] = vendas_vendedor["valor_total_ciclo"] / max(dias_passados,1)
+    # Média diária = vendas acumuladas / dias úteis já trabalhados.
+    vendas_vendedor["media_diaria"] = (
+        vendas_vendedor["valor_total_ciclo"] /
+        max(dias_uteis_trabalhados, 1)
+    )
 
-    # projeção
+    # Projeção = média diária * total de dias úteis do ciclo.
     vendas_vendedor["projecao"] = (
-        vendas_vendedor["media_diaria"] * total_dias
+        vendas_vendedor["media_diaria"] *
+        total_dias_uteis
     )
 
     # Status da meta
@@ -353,58 +557,29 @@ if tipo_dashboard == "Dashboard Mensal":
 
 
     # =====================================================
-    # PROJEÇÃO DE FATURAMENTO (CICLO 26 → 25) SEM DOMINGOS
+    # PROJEÇÃO DE FATURAMENTO (CICLO 26 → 25)
+    # SEGUNDA A SEXTA, EXCETO FERIADOS
     # =====================================================
-
-    from datetime import datetime, timedelta
 
     hoje = datetime.today().date()
 
-    # Determinar início e fim do ciclo (26 -> 25)
-    if hoje.day >= 26:
-        inicio_ciclo = hoje.replace(day=26)
-        proximo_mes = (inicio_ciclo + timedelta(days=32)).replace(day=1)
-        fim_ciclo = proximo_mes.replace(day=25)
-    else:
-        mes_anterior = (hoje.replace(day=1) - timedelta(days=1))
-        inicio_ciclo = mes_anterior.replace(day=26)
-        fim_ciclo = hoje.replace(day=25)
+    # Uma única função para garantir que a projeção geral
+    # siga exatamente a mesma regra dos vendedores.
+    resultado_projecao = calcular_projecao(
+        df_kpi,
+        coluna_valor="valor_total",
+        data_referencia=hoje
+    )
 
-    # Converter data
-    df["data"] = pd.to_datetime(df["data"]).dt.date
+    inicio_ciclo = resultado_projecao["inicio_ciclo"]
+    fim_ciclo = resultado_projecao["fim_ciclo"]
+    ultimo_dia_apurado = resultado_projecao["ultimo_dia_apurado"]
 
-    # Filtrar período
-    df_periodo = df_kpi[
-        (df["data"] >= inicio_ciclo) &
-        (df["data"] <= fim_ciclo) &
-        (df["data"] < hoje)
-    ]
-
-    # Remover domingos
-    df_periodo = df_periodo[pd.to_datetime(df_periodo["data"]).dt.weekday != 6]
-
-    # Remover dia atual
-    df_periodo = df_periodo[df_periodo["data"] < hoje]
-
-    # Faturamento atual
-    faturamento_atual = df_periodo["valor_total"].sum()
-
-    # Dias já ocorridos
-    dias_ocorridos = df_periodo["data"].nunique()
-
-    # Total de dias úteis no ciclo (sem domingos)
-    datas = pd.date_range(inicio_ciclo, fim_ciclo)
-    datas = [d.date() for d in datas if d.weekday() != 6]
-
-    total_dias = len(datas)
-
-    # Média diária
-    media_diaria = faturamento_atual / dias_ocorridos if dias_ocorridos > 0 else 0
-
-    # Projeção final
-    projecao = media_diaria * total_dias
-
-    
+    faturamento_atual = resultado_projecao["venda_acumulada"]
+    dias_uteis_trabalhados = resultado_projecao["dias_uteis_trabalhados"]
+    total_dias_uteis = resultado_projecao["total_dias_uteis"]
+    media_diaria = resultado_projecao["media_diaria"]
+    projecao = resultado_projecao["projecao"]
 
     if projecao >= META_MENSAL:
         cor = "green"
@@ -412,31 +587,42 @@ if tipo_dashboard == "Dashboard Mensal":
     else:
         cor = "red"
         icone = "🔴"
-        
+
     col1, col2 = st.columns(2)
 
     with col1:
-        st.metric("📊 Média diária", formato_real(media_diaria))    
-    with col2:
-        st.markdown("📈 Projeção de vendas")    
-    col2.markdown(
-        f"""
-        <h2 style='color:{cor};'>
-        {icone} {formato_real(projecao)}
-        </h2>
-        """,
-        unsafe_allow_html=True
-    )
+        st.metric(
+            "📊 Média diária",
+            formato_real(media_diaria)
+        )
+        st.caption(
+            f"Dias úteis: {dias_uteis_trabalhados} "
+            f"já trabalhados de {total_dias_uteis}"
+        )
 
-    
+    with col2:
+        st.markdown("📈 Projeção de vendas")
+        col2.markdown(
+            f"""
+            <h2 style='color:{cor};'>
+            {icone} {formato_real(projecao)}
+            </h2>
+            """,
+            unsafe_allow_html=True
+        )
+
+    st.caption(
+        f"📅 Ciclo: {formato_data_br(inicio_ciclo)} até "
+        f"{formato_data_br(fim_ciclo)} | "
+        f"Último dia apurado: {formato_data_br(ultimo_dia_apurado)}"
+    )
 
     # =====================================================
     # 🎯 META DIÁRIA POR VENDEDOR
     # =====================================================
 
-    # Total de dias do ciclo (sem domingo)
-    datas_ciclo = pd.date_range(inicio_ciclo, fim_ciclo)
-    dias_ciclo = len([d for d in datas_ciclo if d.weekday() != 6])
+    # Total de dias úteis do ciclo (segunda a sexta, exceto feriados)
+    dias_ciclo = contar_dias_uteis(inicio_ciclo, fim_ciclo)
 
     # Quantidade de vendedores
     qtd_vendedores = df["vendedor"].nunique()
@@ -507,9 +693,9 @@ if tipo_dashboard == "Dashboard Mensal":
         (df["data"] <= fim_ciclo)
     ].copy()
 
-    # Remover domingos
+    # Manter somente dias úteis (segunda a sexta, exceto feriados)
     df_ciclo_total = df_ciclo_total[
-        pd.to_datetime(df_ciclo_total["data"]).dt.weekday != 6
+        df_ciclo_total["data"].apply(eh_dia_util)
     ]
 
     # Agrupar por dia
@@ -1188,14 +1374,6 @@ elif tipo_dashboard == "Dashboard de Compras":
         .str.upper()
     )
 
-    print(df_pagamentos.head(10))
-    print(
-        df_pagamentos[
-            df_pagamentos["mes"] == mes_atual
-        ]["valor"].sum()
-    )
-    print(df_pagamentos["valor"].sum())
-
     
     # =====================================================
     # JUNTAR BASES
@@ -1305,101 +1483,6 @@ elif tipo_dashboard == "Dashboard de Compras":
         })
 
     df_pagamentos = pd.DataFrame(provisao)
-
-    # =====================================================
-    # 📅 CONTROLE DE JANELA IDEAL DE VENCIMENTO
-    # =====================================================
-
-    #def classificar_vencimento(data):
-        #dia = pd.to_datetime(data).day
-
-        #if 5 <= dia <= 20:
-            #return "🟢 Ideal (05-20)"
-        #else:
-            #return "🔴 Fora da Janela (21-04)"
-
-    #df_pagamentos["status_vencimento"] = (
-        #df_pagamentos["data_vencimento"]
-        #.apply(classificar_vencimento)
-    #)
-
-    #valor_ideal = df_pagamentos[
-        #df_pagamentos["status_vencimento"]
-        #== "🟢 Ideal (05-20)"
-    #]["valor"].sum()
-
-    #valor_fora = df_pagamentos[
-        #df_pagamentos["status_vencimento"]
-        #== "🔴 Fora da Janela (21-04)"
-    #]["valor"].sum()
-
-    #percentual_fora = (
-        #(valor_fora / (valor_ideal + valor_fora)) * 100
-        #if (valor_ideal + valor_fora) > 0 else 0
-    #)
-
-    #st.divider()
-    #st.header("📅 Controle de Janela Ideal de Vencimentos")
-
-    #k1, k2, k3 = st.columns(3)
-
-    #k1.metric(
-        #"🟢 Dentro da Janela",
-        #formato_real(valor_ideal)
-    #)
-
-    #k2.metric(
-        #"🔴 Fora da Janela",
-        #formato_real(valor_fora)
-    #)
-
-    #k3.metric(
-        #"⚠️ % Fora da Política",
-        #f"{percentual_fora:.2f}%"
-    #)
-
-    #tabela_vencimentos = df_pagamentos.copy()
-
-    #tabela_vencimentos["data_vencimento"] = (
-        #pd.to_datetime(tabela_vencimentos["data_vencimento"])
-    #.dt.strftime("%d/%m/%Y")
-    #)
-
-    #tabela_vencimentos["Valor"] = (
-        #tabela_vencimentos["valor"]
-        #.apply(formato_real)
-    #)
-
-    #st.dataframe(
-        #tabela_vencimentos[
-            #[
-                #"pedido",
-                #"fornecedor",
-                #"parcela",
-                #"data_vencimento",
-                #"Valor",
-                #"status_vencimento"
-            #]
-        #],
-        #use_container_width=True,
-        #hide_index=True
-    #)
-
-    
-
-    #df_provisao = pd.DataFrame(provisao)
-
-    #df_provisao["mes"] = (
-        #pd.to_datetime(df_provisao["data_vencimento"])
-        #.dt.to_period("M")
-        #.astype(str)
-    #)
-
-    #provisao_mensal = (
-        #df_provisao.groupby("mes")["valor"]
-        #.sum()
-        #.reset_index()
-    #)
 
     # =====================================================
     # 📅 GARANTIR DATA COMO DATETIME
@@ -1543,7 +1626,6 @@ elif tipo_dashboard == "Dashboard de Compras":
     )
 
     
-
     
     # =====================================================
     # 🏆 RANKING FORNECEDOR (TABELA)
